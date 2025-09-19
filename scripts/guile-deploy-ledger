@@ -1,0 +1,16 @@
+#!/usr/bin/env guile
+!#
+;;; guile-deploy-ledger -- CLI tool for deployment tracking
+;;; Copyright (C) 2024 DSP-DR
+;;;
+;;; This file is part of Guile Deploy Ledger.
+
+(add-to-load-path (string-append (dirname (current-filename)) "/../src"))
+
+(use-modules (deploy-ledger cli main)
+             (ice-9 getopt-long))
+
+(define (main args)
+  (run-cli args))
+
+(main (command-line))

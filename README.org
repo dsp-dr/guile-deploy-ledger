@@ -1,0 +1,242 @@
+#+TITLE: Guile Deploy Ledger
+#+AUTHOR: DSP-DR
+#+DESCRIPTION: A Guile Scheme deployment tracking and change control system
+
+* Overview
+
+Guile Deploy Ledger is a comprehensive deployment tracking and change control system designed to serve as a ledger for deployment events across both monolithic and microservice architectures. It provides detailed insights into deployment patterns, rollback events, and system evolution over time.
+
+* Features
+
+** Core Capabilities
+- Track deployment events with full metadata
+- Support multiple deployment strategies (blue-green, canary, rolling, big-bang)
+- Record rollback events with reasons and impact analysis
+- Calculate deployment metrics (frequency, MTTR, success rates)
+- Generate visual deployment timelines
+- Export data in multiple formats (S-expressions, JSON, SQLite)
+
+** Integration Support
+- Webhook receiver for CI/CD systems
+- Prometheus metrics exporter
+- Git hooks for automatic tracking
+- REST API for remote access
+- Plugin architecture for custom strategies
+
+* Installation
+
+** Using Guix
+#+BEGIN_SRC bash
+guix package -f .guix.scm
+#+END_SRC
+
+** Manual Installation
+#+BEGIN_SRC bash
+gmake install
+#+END_SRC
+
+* Usage Examples
+
+** Recording a Deployment
+#+BEGIN_SRC bash
+# Record a blue-green deployment
+guile-deploy-ledger record-deployment \
+  --service api-gateway \
+  --version 2.3.0 \
+  --environment production \
+  --type blue-green \
+  --started "2024-01-15T10:00:00Z" \
+  --completed "2024-01-15T10:15:00Z" \
+  --status success
+
+# Record a canary deployment
+guile-deploy-ledger record-deployment \
+  --service user-service \
+  --version 1.5.2 \
+  --environment staging \
+  --type canary \
+  --canary-percentage 10 \
+  --started "2024-01-15T11:00:00Z" \
+  --status in-progress
+#+END_SRC
+
+** Recording a Rollback
+#+BEGIN_SRC bash
+guile-deploy-ledger record-rollback \
+  --service payment-service \
+  --from-version 3.1.0 \
+  --to-version 3.0.5 \
+  --reason "Performance degradation detected" \
+  --timestamp "2024-01-15T12:30:00Z"
+#+END_SRC
+
+** Querying Deployments
+#+BEGIN_SRC bash
+# List all deployments for a service
+guile-deploy-ledger list-deployments --service api-gateway
+
+# Show deployments in a date range
+guile-deploy-ledger list-deployments \
+  --from "2024-01-01" \
+  --to "2024-01-31"
+
+# Filter by deployment type
+guile-deploy-ledger list-deployments --type canary
+#+END_SRC
+
+** Generating Metrics
+#+BEGIN_SRC bash
+# Show deployment frequency metrics
+guile-deploy-ledger show-metrics --metric frequency
+
+# Calculate MTTR for a service
+guile-deploy-ledger show-metrics \
+  --metric mttr \
+  --service user-service
+
+# Get success rate by deployment type
+guile-deploy-ledger show-metrics \
+  --metric success-rate \
+  --group-by type
+#+END_SRC
+
+** Visualization
+#+BEGIN_SRC bash
+# Generate Mermaid deployment timeline
+guile-deploy-ledger visualize \
+  --format mermaid \
+  --output deployment-timeline.mmd
+
+# Create dependency graph
+guile-deploy-ledger visualize \
+  --format dot \
+  --type dependencies \
+  --output service-deps.dot
+#+END_SRC
+
+** Export Operations
+#+BEGIN_SRC bash
+# Export to S-expressions
+guile-deploy-ledger export --format sexp --output deployments.scm
+
+# Export to JSON
+guile-deploy-ledger export --format json --output deployments.json
+
+# Generate org-mode report
+guile-deploy-ledger export --format org --output report.org
+#+END_SRC
+
+* Library Usage
+
+** Basic Example
+#+BEGIN_SRC scheme
+(use-modules (deploy-ledger core)
+             (deploy-ledger storage)
+             (deploy-ledger query))
+
+;; Initialize storage
+(define db (open-deployment-db "deployments.db"))
+
+;; Create a deployment event
+(define deployment
+  (make-deployment-event
+    #:service-name "api-gateway"
+    #:version "2.3.0"
+    #:environment "production"
+    #:deployment-type 'blue-green
+    #:started (current-time)
+    #:status 'success))
+
+;; Store the deployment
+(store-deployment! db deployment)
+
+;; Query deployments
+(define recent-deployments
+  (query-deployments db
+    #:from (days-ago 7)
+    #:to (current-time)))
+
+;; Calculate metrics
+(define frequency
+  (deployment-frequency db "api-gateway"))
+#+END_SRC
+
+** Plugin Development
+#+BEGIN_SRC scheme
+(use-modules (deploy-ledger plugins))
+
+(define-deployment-strategy my-custom-strategy
+  (lambda (deployment)
+    ;; Custom deployment logic
+    ...))
+
+(register-strategy! 'custom my-custom-strategy)
+#+END_SRC
+
+* Architecture
+
+** Data Model
+- =deployment-event=: Core record for deployment tracking
+- =rollback-event=: Specialized record for rollback operations
+- =service-metadata=: Service configuration and dependencies
+- =deployment-metrics=: Calculated metrics and statistics
+
+** Storage
+- SQLite for persistent storage
+- In-memory cache for performance
+- S-expression serialization for exports
+- JSON support for external integrations
+
+** Query Engine
+- Flexible filtering by multiple criteria
+- Time-based queries with SRFI-19
+- Aggregation and grouping capabilities
+- Pattern matching for failure analysis
+
+* Development
+
+** Running Tests
+#+BEGIN_SRC bash
+gmake test
+#+END_SRC
+
+** Building Documentation
+#+BEGIN_SRC bash
+gmake docs
+#+END_SRC
+
+** Pre-commit Hooks
+#+BEGIN_SRC bash
+gmake install-hooks
+#+END_SRC
+
+* Configuration
+
+Configuration can be done via environment variables or configuration file:
+
+#+BEGIN_SRC bash
+export DEPLOY_LEDGER_DB="/var/lib/deploy-ledger/deployments.db"
+export DEPLOY_LEDGER_PORT=8080
+export DEPLOY_LEDGER_WEBHOOK_SECRET="your-secret-key"
+#+END_SRC
+
+Or create =~/.deploy-ledger.conf=:
+#+BEGIN_SRC scheme
+((database . "/var/lib/deploy-ledger/deployments.db")
+ (port . 8080)
+ (webhook-secret . "your-secret-key")
+ (prometheus-enabled . #t)
+ (prometheus-port . 9090))
+#+END_SRC
+
+* License
+
+GNU General Public License v3.0
+
+* Contributing
+
+Contributions are welcome! Please see CONTRIBUTING.org for guidelines.
+
+* Support
+
+For issues, questions, or suggestions, please open an issue on GitHub.
