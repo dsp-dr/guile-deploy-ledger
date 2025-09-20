@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # check-deps.sh - Check for required dependencies
 
-set -e
+# Don't exit on individual command failures - we handle them ourselves
+set +e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -99,7 +100,10 @@ check_guile_module "srfi srfi-19" "required" "SRFI-19 time"
 check_guile_module "srfi srfi-64" "required" "SRFI-64 testing"
 check_guile_module "ice-9 match" "required" "Pattern matching"
 check_guile_module "ice-9 format" "required" "Formatting"
-check_guile_module "sqlite3" "optional" "SQLite3 bindings"
+# SQLite3 is optional for basic functionality
+if ! check_guile_module "sqlite3" "optional" "SQLite3 bindings"; then
+    echo -e "${CYAN}  Note: Some features will be limited without SQLite3 module${NC}"
+fi
 
 # Check filesystem permissions
 echo ""
