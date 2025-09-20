@@ -1,0 +1,48 @@
+groups:
+  - name: deployment_alerts
+    interval: 30s
+    rules:
+      - alert: HighDeploymentFailureRate
+        expr: rate(deployment_failures_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High deployment failure rate detected"
+          description: "Deployment failure rate is {{ $value | humanizePercentage }} over the last 5 minutes"
+
+      - alert: LongMTTR
+        expr: deployment_mttr_seconds > 1800
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mean Time To Recovery exceeds 30 minutes"
+          description: "MTTR is {{ $value | humanizeDuration }}"
+
+      - alert: LowDeploymentFrequency
+        expr: rate(deployments_total[1d]) < 0.1
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Low deployment frequency"
+          description: "Less than 0.1 deployments per day"
+
+      - alert: HighRollbackRate
+        expr: rate(rollbacks_total[1h]) / rate(deployments_total[1h]) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rollback rate detected"
+          description: "{{ $value | humanizePercentage }} of deployments are being rolled back"
+
+      - alert: ServiceHealthLow
+        expr: service_health_score < 50
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Service health score below threshold"
+          description: "Service {{ $labels.service }} health score is {{ $value }}/100"

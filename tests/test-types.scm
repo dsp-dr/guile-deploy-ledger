@@ -1,6 +1,8 @@
 ;;; test-types.scm -- Tests for core data types
 ;;; Copyright (C) 2024 DSP-DR
 
+(add-to-load-path (string-append (dirname (dirname (current-filename))) "/src"))
+
 (use-modules (deploy-ledger core types)
              (srfi srfi-64)
              (srfi srfi-19))

@@ -1,7 +1,7 @@
 # Makefile for Guile Deploy Ledger
 # Copyright (C) 2024 DSP-DR
 
-SHELL := /bin/bash
+SHELL := /usr/local/bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 # Configuration
@@ -43,8 +43,8 @@ all: compile ## Build everything
 help: ## Show this help message
 	@echo "Guile Deploy Ledger - Make Targets"
 	@echo ""
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(BLUE)%-15s$(NC) %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*## .*$$' $(MAKEFILE_LIST) | \
+		awk 'BEGIN {FS = ":.*## "}; {printf "  $(BLUE)%-15s$(NC) %s\n", $$1, $$2}'
 
 compile: $(SOURCES:.scm=.go) ## Compile Scheme files to bytecode
 	@echo -e "$(GREEN)✓ Compilation complete$(NC)"
@@ -55,10 +55,7 @@ compile: $(SOURCES:.scm=.go) ## Compile Scheme files to bytecode
 
 test: ## Run all tests
 	@echo -e "$(YELLOW)Running tests...$(NC)"
-	@for test in $(TESTS); do \
-		echo -e "$(BLUE)Testing $$test...$(NC)"; \
-		$(GUILE) -L $(SRC_DIR) -s $$test || exit 1; \
-	done
+	@$(GUILE) -L $(SRC_DIR) tests/run-tests.scm tests/
 	@echo -e "$(GREEN)✓ All tests passed$(NC)"
 
 check: test lint ## Run tests and linting

@@ -1,6 +1,8 @@
 ;;; test-metrics.scm -- Tests for query and metrics module
 ;;; Copyright (C) 2024 DSP-DR
 
+(add-to-load-path (string-append (dirname (dirname (current-filename))) "/src"))
+
 (use-modules (deploy-ledger core types)
              (deploy-ledger storage sqlite)
              (deploy-ledger query metrics)

@@ -1,0 +1,720 @@
+#+TITLE: Guile Deploy Ledger - Technical Deep Dive
+#+SUBTITLE: Architecture, Implementation, and Best Practices
+#+AUTHOR: Engineering Team
+#+DATE: January 2024
+#+OPTIONS: toc:nil num:nil
+#+LATEX_CLASS: beamer
+#+LATEX_CLASS_OPTIONS: [presentation,aspectratio=169]
+#+BEAMER_THEME: metropolis
+#+BEAMER_COLOR_THEME: seahorse
+
+* Architecture Overview
+
+** System Layers
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC ditaa :file layers.png :cmdline -r
+    +--------------------------------------------------+
+    |                  CLI Interface                   |
+    |             (deploy-ledger cli main)             |
+    +--------------------------------------------------+
+    |              Query & Metrics Layer               |
+    |          (deploy-ledger query metrics)           |
+    +--------------------------------------------------+
+    |                 Core Data Types                  |
+    |            (deploy-ledger core types)            |
+    +--------------------------------------------------+
+    |                Storage Abstraction               |
+    |         (deploy-ledger storage sqlite)           |
+    +--------------------------------------------------+
+    |                   SQLite Database                |
+    +--------------------------------------------------+
+#+END_SRC
+
+** Module Dependencies
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC mermaid
+graph TD
+    CLI[CLI Commands] --> QM[Query/Metrics]
+    CLI --> Storage[Storage Layer]
+    QM --> Storage
+    QM --> Types[Core Types]
+    Storage --> Types
+    Export[Export Module] --> Storage
+    Export --> Types
+    Viz[Visualization] --> QM
+    Viz --> Storage
+#+END_SRC
+
+* Data Model Design
+
+** SRFI-9 Records Architecture
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define-record-type <deployment-event>
+  (make-deployment-event-internal
+    id service-name version environment
+    deployment-type started completed status
+    initiator metadata parent-id)
+  deployment-event?
+  (id deployment-event-id)
+  (service-name deployment-event-service-name)
+  ;; ... additional fields
+  )
+#+END_SRC
+
+Benefits:
+- Type safety at compile time
+- Efficient memory layout
+- Clear API contracts
+- Immutability by default
+
+** Event Sourcing Pattern
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Immutable Events                                                :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Deployments are append-only
+- Status changes create new events
+- Full audit trail preserved
+- Time-travel queries possible
+
+*** Event Chain                                                    :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+Deploy-v1.0 → Deploy-v1.1 → Rollback
+     ↓            ↓             ↓
+  Success     In-Progress    To-v1.0
+#+END_SRC
+
+** Database Schema
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC sql
+CREATE TABLE deployments (
+  id TEXT PRIMARY KEY,
+  service_name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  deployment_type TEXT NOT NULL,
+  started INTEGER NOT NULL,
+  completed INTEGER,
+  status TEXT NOT NULL,
+  parent_id TEXT,
+  FOREIGN KEY (parent_id)
+    REFERENCES deployments(id)
+);
+
+CREATE INDEX idx_deployments_service
+  ON deployments(service_name);
+CREATE INDEX idx_deployments_started
+  ON deployments(started);
+#+END_SRC
+
+* Storage Layer
+
+** SQLite Backend Choice
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Advantages                                                      :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Zero configuration
+- ACID compliance
+- Excellent for embedded use
+- Single file deployment
+- WAL mode for concurrency
+
+*** Trade-offs                                                     :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Limited write concurrency
+- Not suitable for >1GB/day
+- No built-in replication
+- Single-node limitation
+
+** Transaction Management
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define (with-transaction db thunk)
+  "Execute thunk within database transaction"
+  (sqlite-exec db "BEGIN TRANSACTION")
+  (catch #t
+    (lambda ()
+      (let ((result (thunk)))
+        (sqlite-exec db "COMMIT")
+        result))
+    (lambda args
+      (sqlite-exec db "ROLLBACK")
+      (apply throw args))))
+#+END_SRC
+
+Key features:
+- Automatic rollback on error
+- Nested transaction support
+- Consistent error handling
+
+** Prepared Statements
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define (store-deployment! db deployment)
+  (let ((stmt (sqlite-prepare db
+    "INSERT INTO deployments
+     (id, service_name, version, ...)
+     VALUES (?, ?, ?, ...)")))
+    (sqlite-bind stmt 1
+      (deployment-event-id deployment))
+    ;; ... bind other parameters
+    (sqlite-step stmt)
+    (sqlite-finalize stmt)))
+#+END_SRC
+
+Benefits:
+- SQL injection prevention
+- Performance optimization
+- Type safety
+
+* Query Engine
+
+** Metrics Calculation Pipeline
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define* (calculate-mttr db service-name
+          #:key (period-days 30))
+  (let* ((failures (get-failures db service-name))
+         (recoveries (map find-recovery failures)))
+    (average (map time-difference
+                  failures recoveries))))
+#+END_SRC
+
+Pipeline stages:
+1. Data retrieval with filters
+2. Time-based aggregation
+3. Statistical calculation
+4. Result formatting
+
+** Time-Series Analysis
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Bucketing Strategy                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define (bucket-by-interval
+         events interval-seconds)
+  (group-by
+    (lambda (e)
+      (quotient
+        (time->unix e)
+        interval-seconds))
+    events))
+#+END_SRC
+
+*** Sliding Windows                                                :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Hourly aggregations
+- Daily summaries
+- Weekly trends
+- Monthly reports
+
+** Pattern Detection
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define (find-failure-patterns db)
+  (let ((failures (get-all-failures db)))
+    (identify-patterns
+      #:temporal (group-by-hour failures)
+      #:service (group-by-service failures)
+      #:type (group-by-deployment-type failures)
+      #:correlation (find-correlations failures))))
+#+END_SRC
+
+Detects:
+- Peak failure times
+- Problematic services
+- Risky deployment types
+- Cascading failures
+
+* Performance Optimization
+
+** Caching Strategy
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** In-Memory Cache                                                :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define *metrics-cache*
+  (make-hash-table))
+
+(define (cached-metric key thunk)
+  (or (hash-ref *metrics-cache* key)
+      (let ((value (thunk)))
+        (hash-set! *metrics-cache*
+                  key value)
+        value)))
+#+END_SRC
+
+*** Cache Invalidation                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Time-based expiry
+- Event-based invalidation
+- LRU eviction
+- Manual flush
+
+** Query Optimization
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+Techniques employed:
+1. **Index usage**: All queries use covering indexes
+2. **Batch operations**: Minimize round-trips
+3. **Lazy evaluation**: Stream results when possible
+4. **Query planning**: EXPLAIN QUERY PLAN analysis
+
+#+BEGIN_SRC sql
+-- Optimized query with covering index
+SELECT service_name, COUNT(*), AVG(duration)
+FROM deployments
+WHERE started > ?
+GROUP BY service_name
+-- Uses idx_deployments_started
+#+END_SRC
+
+** Concurrency Model
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** WAL Mode                                                       :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(sqlite-exec db
+  "PRAGMA journal_mode = WAL")
+(sqlite-exec db
+  "PRAGMA synchronous = NORMAL")
+#+END_SRC
+
+*** Connection Pooling                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Read connection pool
+- Single write connection
+- Automatic retry logic
+- Connection health checks
+
+* Integration Patterns
+
+** Webhook Processing
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define (webhook-handler request)
+  (let* ((payload (parse-json-body request))
+         (deployment (webhook->deployment payload)))
+    (with-transaction db
+      (lambda ()
+        (store-deployment! db deployment)
+        (trigger-notifications deployment)
+        (update-metrics-cache deployment)))
+    (respond-200 "OK")))
+#+END_SRC
+
+Features:
+- Idempotent processing
+- Signature validation
+- Rate limiting
+- Error recovery
+
+** Event Streaming
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Publisher                                                      :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define (publish-event event)
+  (for-each
+    (lambda (subscriber)
+      (send-event subscriber event))
+    *subscribers*))
+#+END_SRC
+
+*** Subscriber                                                     :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define (subscribe pattern handler)
+  (add-subscriber!
+    (make-subscription
+      #:pattern pattern
+      #:handler handler)))
+#+END_SRC
+
+** Plugin Architecture
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define-syntax define-plugin
+  (syntax-rules ()
+    ((define-plugin name init-proc cleanup-proc)
+     (register-plugin!
+       'name
+       (make-plugin
+         #:init init-proc
+         #:cleanup cleanup-proc)))))
+
+(define-plugin my-custom-metrics
+  (lambda () (display "Plugin initialized"))
+  (lambda () (display "Plugin cleanup")))
+#+END_SRC
+
+* Testing Strategy
+
+** Test Pyramid
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC ditaa :file test-pyramid.png :cmdline -r
+    /\        UI Tests
+   /  \       (5%)
+  /    \
+ /      \     Integration Tests
+/        \    (20%)
+/          \
+/            \ Unit Tests
++-----------+ (75%)
+#+END_SRC
+
+** Unit Testing with SRFI-64
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(test-group "deployment-event"
+  (test-assert "create deployment"
+    (let ((d (make-deployment-event
+              #:service-name "test"
+              #:version "1.0")))
+      (deployment-event? d)))
+
+  (test-equal "status update"
+    'success
+    (begin
+      (set-deployment-event-status! d 'success)
+      (deployment-event-status d))))
+#+END_SRC
+
+** Integration Testing
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(test-group "end-to-end"
+  (let ((db (open-test-database)))
+    (test-assert "deployment lifecycle"
+      (simulate-deployment-lifecycle db))
+    (test-assert "rollback scenario"
+      (simulate-rollback-scenario db))
+    (cleanup-test-database db)))
+#+END_SRC
+
+* Deployment Strategies
+
+** Zero-Downtime Deployment
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Blue-Green Pattern                                             :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+1. Deploy to blue
+2. Run health checks
+3. Switch traffic
+4. Keep green as backup
+5. Cleanup after validation
+
+*** Canary Pattern                                                 :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+1. Deploy to 5% traffic
+2. Monitor metrics
+3. Gradual increase
+4. Full rollout at 100%
+5. Automatic rollback on errors
+
+** Rollback Strategies
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+(define (intelligent-rollback service)
+  (let* ((current (get-current-version service))
+         (previous (get-last-stable-version service))
+         (impact (analyze-rollback-impact
+                   service current previous)))
+    (cond
+      ((high-impact? impact)
+       (coordinated-rollback service previous))
+      ((medium-impact? impact)
+       (staged-rollback service previous))
+      (else
+       (immediate-rollback service previous)))))
+#+END_SRC
+
+* Monitoring & Observability
+
+** Metrics Export
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Prometheus Format                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC
+# HELP deployments_total Total deployments
+# TYPE deployments_total counter
+deployments_total{service="api"} 42
+
+# HELP deployment_duration_seconds
+# TYPE deployment_duration_seconds histogram
+deployment_duration_seconds_bucket{le="60"} 35
+#+END_SRC
+
+*** OpenTelemetry                                                  :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define (create-span deployment)
+  (make-span
+    #:name "deployment"
+    #:attributes
+    `((service . ,service)
+      (version . ,version))))
+#+END_SRC
+
+** Alerting Rules
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC yaml
+groups:
+- name: deployment_alerts
+  rules:
+  - alert: HighFailureRate
+    expr: deployment_success_rate < 0.9
+    for: 5m
+    annotations:
+      summary: "High deployment failure rate"
+
+  - alert: LongMTTR
+    expr: deployment_mttr_seconds > 1800
+    for: 10m
+    annotations:
+      summary: "MTTR exceeds 30 minutes"
+#+END_SRC
+
+* Security Considerations
+
+** Authentication & Authorization
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** API Token Validation                                           :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+#+BEGIN_SRC scheme
+(define (validate-token token)
+  (let ((claims (jwt-decode token)))
+    (and (valid-signature? token)
+         (not-expired? claims)
+         (authorized-scope? claims))))
+#+END_SRC
+
+*** RBAC Model                                                     :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.5
+:END:
+
+- Viewer: Read-only access
+- Deployer: Record deployments
+- Admin: Full access
+- Auditor: Export reports
+
+** Data Protection
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+Measures implemented:
+1. **Encryption at rest**: SQLCipher support
+2. **TLS for transit**: HTTPS only
+3. **PII handling**: Automatic redaction
+4. **Audit logging**: All modifications tracked
+5. **Backup encryption**: GPG encrypted backups
+
+* Future Enhancements
+
+** Planned Features
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+*** Short Term (Q1 2024)                                           :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.33
+:END:
+
+- Kubernetes operator
+- GraphQL API
+- Real-time streaming
+- ML predictions
+
+*** Medium Term (Q2 2024)                                          :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.33
+:END:
+
+- Multi-cluster federation
+- GitOps integration
+- Cost tracking
+- SLO management
+
+*** Long Term (2024+)                                              :BMCOL:
+:PROPERTIES:
+:BEAMER_col: 0.34
+:END:
+
+- Auto-remediation
+- Chaos engineering
+- Compliance automation
+- AI-driven insights
+
+** Extension Points
+:PROPERTIES:
+:BEAMER_opt: fragile
+:END:
+
+#+BEGIN_SRC scheme
+;; Custom storage backend
+(define-storage-backend postgresql
+  #:connect pg-connect
+  #:store pg-store
+  #:retrieve pg-retrieve)
+
+;; Custom metrics
+(define-metric custom-metric
+  #:calculate (lambda (db service)
+                ;; Custom calculation
+                ))
+
+;; Custom visualization
+(define-visualizer custom-viz
+  #:generate (lambda (data)
+               ;; Generate visualization
+               ))
+#+END_SRC
+
+* Q&A
+
+** Questions?
+:PROPERTIES:
+:BEAMER_opt: plain
+:END:
+
+#+BEGIN_CENTER
+#+ATTR_LATEX: :width 0.5\textwidth
+[[./guile-logo.png]]
+
+Thank you for your attention!
+
+GitHub: [[https://github.com/dsp-dr/guile-deploy-ledger]]
+
+Documentation: [[https://deploy-ledger.dev/docs]]
+
+Contact: engineering@deploy-ledger.dev
+#+END_CENTER

@@ -1,6 +1,8 @@
 ;;; test-storage.scm -- Tests for SQLite storage backend
 ;;; Copyright (C) 2024 DSP-DR
 
+(add-to-load-path (string-append (dirname (dirname (current-filename))) "/src"))
+
 (use-modules (deploy-ledger core types)
              (deploy-ledger storage sqlite)
              (srfi srfi-64)
