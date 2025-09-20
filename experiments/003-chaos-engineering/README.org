@@ -1,0 +1,138 @@
+#+TITLE: Experiment 003: Chaos Engineering Integration
+#+DATE: 2024-01-15
+#+AUTHOR: DSP-DR
+
+* Goal
+Integrate deployment tracking with chaos engineering experiments to validate deployment resilience.
+
+* Concept
+Track chaos experiments as special deployment events to:
+- Correlate failures with chaos experiments
+- Measure recovery time from induced failures
+- Validate deployment rollback mechanisms
+- Test dependency failure scenarios
+
+* Implementation
+
+** Chaos Event Tracking
+#+BEGIN_SRC scheme :tangle chaos-events.scm
+(define-module (deploy-ledger plugins chaos)
+  #:use-module (deploy-ledger core types)
+  #:export (record-chaos-experiment
+            analyze-chaos-impact
+            chaos-deployment-correlation))
+
+(define (record-chaos-experiment experiment)
+  "Record chaos experiment as special deployment"
+  (make-deployment-event
+   #:service-name (assoc-ref experiment 'target-service)
+   #:version "chaos-experiment"
+   #:environment (assoc-ref experiment 'environment)
+   #:deployment-type 'chaos-engineering
+   #:metadata `((experiment-type . ,(assoc-ref experiment 'type))
+                (blast-radius . ,(assoc-ref experiment 'blast-radius))
+                (hypothesis . ,(assoc-ref experiment 'hypothesis)))))
+
+(define (analyze-chaos-impact experiment deployments)
+  "Analyze impact of chaos experiment on deployments"
+  (let ((during-chaos (filter-deployments-during experiment deployments))
+        (after-chaos (filter-deployments-after experiment deployments)))
+    `((failures-during . ,(count-failures during-chaos))
+      (recovery-time . ,(calculate-recovery-time experiment after-chaos))
+      (rollbacks-triggered . ,(count-rollbacks after-chaos)))))
+#+END_SRC
+
+** Experiment Scenarios
+
+*** Network Partition
+#+BEGIN_SRC yaml :tangle experiments/network-partition.yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: NetworkChaos
+metadata:
+  name: network-partition-test
+spec:
+  action: partition
+  mode: all
+  selector:
+    namespaces:
+      - production
+  direction: both
+  target:
+    selector:
+      namespaces:
+        - production
+  duration: "5m"
+#+END_SRC
+
+*** Pod Failure
+#+BEGIN_SRC yaml :tangle experiments/pod-failure.yaml
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: pod-failure-test
+spec:
+  action: pod-kill
+  mode: random-max-percent
+  value: "50"
+  selector:
+    labelSelectors:
+      app: payment-service
+  duration: "10m"
+#+END_SRC
+
+* Metrics to Track
+
+** Resilience Metrics
+- Time to detect failure
+- Time to recover (automated)
+- Manual intervention required
+- Cascading failure count
+
+** Deployment Impact
+- Deployments failed during chaos
+- Deployments succeeded despite chaos
+- Rollbacks triggered
+- SLA violations
+
+* Integration Points
+
+1. **Chaos Mesh**: Kubernetes chaos engineering
+2. **Litmus**: Cloud-native chaos engineering
+3. **Gremlin**: Failure-as-a-service platform
+4. **AWS FIS**: Fault injection simulator
+
+* Experiment Log
+
+** [2024-01-15] Database Failure Simulation
+- Target: PostgreSQL primary
+- Duration: 5 minutes
+- Result: Automatic failover successful
+- Recovery time: 45 seconds
+
+** [2024-01-16] API Gateway Latency Injection
+- Target: API Gateway
+- Latency: +500ms
+- Duration: 15 minutes
+- Result: Circuit breaker triggered correctly
+
+* Automation
+
+** Scheduled Chaos
+#+BEGIN_SRC scheme :tangle scheduled-chaos.scm
+(define (schedule-chaos-experiments db)
+  "Schedule regular chaos experiments"
+  (let ((experiments '((monday . network-latency)
+                      (wednesday . pod-failure)
+                      (friday . database-failover))))
+    (for-each
+     (lambda (exp)
+       (when (eq? (current-day) (car exp))
+         (run-chaos-experiment (cdr exp))
+         (record-chaos-event db (cdr exp))))
+     experiments)))
+#+END_SRC
+
+* Results Dashboard
+- [[./chaos-impact-report.html][Impact Analysis Dashboard]]
+- [[./resilience-metrics.json][Resilience Metrics]]
+- [[./failure-correlation.org][Failure Correlation Report]]

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deployment Ledger Dashboard</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .dashboard {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        h1 {
+            margin: 0;
+            color: #2d3748;
+            font-size: 2.5em;
+        }
+        .subtitle {
+            color: #718096;
+            margin-top: 10px;
+        }
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .metric-card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.2s;
+        }
+        .metric-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.15);
+        }
+        .metric-label {
+            font-size: 0.875em;
+            color: #718096;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+        .metric-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2d3748;
+            margin: 10px 0;
+        }
+        .metric-change {
+            font-size: 0.875em;
+        }
+        .metric-change.positive {
+            color: #48bb78;
+        }
+        .metric-change.negative {
+            color: #f56565;
+        }
+        .chart-container {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            margin-bottom: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .chart-title {
+            font-size: 1.5em;
+            color: #2d3748;
+            margin-bottom: 20px;
+        }
+        #timeline-chart, #dependency-graph {
+            width: 100%;
+            height: 400px;
+        }
+        .deployment-list {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .deployment-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 15px;
+            border-bottom: 1px solid #e2e8f0;
+            transition: background 0.2s;
+        }
+        .deployment-item:hover {
+            background: #f7fafc;
+        }
+        .deployment-item:last-child {
+            border-bottom: none;
+        }
+        .deployment-service {
+            font-weight: 600;
+            color: #2d3748;
+        }
+        .deployment-version {
+            color: #4299e1;
+            font-family: monospace;
+        }
+        .deployment-status {
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.875em;
+            font-weight: 600;
+        }
+        .status-success {
+            background: #c6f6d5;
+            color: #22543d;
+        }
+        .status-failure {
+            background: #fed7d7;
+            color: #742a2a;
+        }
+        .status-in-progress {
+            background: #feebc8;
+            color: #744210;
+        }
+        .mermaid {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="dashboard">
+        <div class="header">
+            <h1>🚀 Deployment Ledger Dashboard</h1>
+            <div class="subtitle">Real-time deployment tracking and analytics</div>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card">
+                <div class="metric-label">Total Deployments</div>
+                <div class="metric-value" id="total-deployments">247</div>
+                <div class="metric-change positive">↑ 12% from last week</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Success Rate</div>
+                <div class="metric-value" id="success-rate">94.3%</div>
+                <div class="metric-change positive">↑ 2.1% improvement</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">MTTR</div>
+                <div class="metric-value" id="mttr">12.5m</div>
+                <div class="metric-change positive">↓ 3.2m faster recovery</div>
+            </div>
+            <div class="metric-card">
+                <div class="metric-label">Active Services</div>
+                <div class="metric-value" id="active-services">42</div>
+                <div class="metric-change">+3 new services</div>
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2 class="chart-title">Deployment Timeline</h2>
+            <div class="mermaid" id="timeline-chart">
+                graph LR
+                    A[API Gateway<br/>v2.3.0<br/>✓] --> B[User Service<br/>v1.5.2<br/>✓]
+                    B --> C[Payment Service<br/>v3.1.0<br/>✗]
+                    C --> D[ROLLBACK<br/>v3.0.5]
+                    D --> E[Payment Service<br/>v3.1.1<br/>✓]
+                    style A fill:#c6f6d5
+                    style B fill:#c6f6d5
+                    style C fill:#fed7d7
+                    style D fill:#fbb6ce
+                    style E fill:#c6f6d5
+            </div>
+        </div>
+
+        <div class="chart-container">
+            <h2 class="chart-title">Service Dependencies</h2>
+            <svg id="dependency-graph"></svg>
+        </div>
+
+        <div class="deployment-list">
+            <h2 class="chart-title">Recent Deployments</h2>
+            <div id="deployment-list">
+                <div class="deployment-item">
+                    <div>
+                        <span class="deployment-service">api-gateway</span>
+                        <span class="deployment-version">v2.3.0</span>
+                    </div>
+                    <span class="deployment-status status-success">Success</span>
+                </div>
+                <div class="deployment-item">
+                    <div>
+                        <span class="deployment-service">user-service</span>
+                        <span class="deployment-version">v1.5.2</span>
+                    </div>
+                    <span class="deployment-status status-success">Success</span>
+                </div>
+                <div class="deployment-item">
+                    <div>
+                        <span class="deployment-service">payment-service</span>
+                        <span class="deployment-version">v3.1.0</span>
+                    </div>
+                    <span class="deployment-status status-failure">Failed</span>
+                </div>
+                <div class="deployment-item">
+                    <div>
+                        <span class="deployment-service">notification-service</span>
+                        <span class="deployment-version">v2.0.1</span>
+                    </div>
+                    <span class="deployment-status status-in-progress">In Progress</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Initialize Mermaid
+        mermaid.initialize({ startOnLoad: true });
+
+        // D3.js Dependency Graph
+        const width = document.getElementById('dependency-graph').clientWidth;
+        const height = 400;
+
+        const svg = d3.select("#dependency-graph")
+            .attr("width", width)
+            .attr("height", height);
+
+        // Sample data for dependency graph
+        const nodes = [
+            {id: "api-gateway", group: 1},
+            {id: "user-service", group: 2},
+            {id: "payment-service", group: 2},
+            {id: "notification-service", group: 2},
+            {id: "database", group: 3},
+            {id: "cache", group: 3},
+            {id: "message-queue", group: 3}
+        ];
+
+        const links = [
+            {source: "api-gateway", target: "user-service", value: 1},
+            {source: "api-gateway", target: "payment-service", value: 1},
+            {source: "api-gateway", target: "notification-service", value: 1},
+            {source: "user-service", target: "database", value: 1},
+            {source: "user-service", target: "cache", value: 1},
+            {source: "payment-service", target: "database", value: 1},
+            {source: "payment-service", target: "message-queue", value: 1},
+            {source: "notification-service", target: "message-queue", value: 1}
+        ];
+
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d => d.id).distance(100))
+            .force("charge", d3.forceManyBody().strength(-300))
+            .force("center", d3.forceCenter(width / 2, height / 2));
+
+        const link = svg.append("g")
+            .selectAll("line")
+            .data(links)
+            .enter().append("line")
+            .attr("stroke", "#999")
+            .attr("stroke-opacity", 0.6)
+            .attr("stroke-width", d => Math.sqrt(d.value) * 2);
+
+        const node = svg.append("g")
+            .selectAll("g")
+            .data(nodes)
+            .enter().append("g");
+
+        node.append("circle")
+            .attr("r", 10)
+            .attr("fill", d => d.group === 1 ? "#4299e1" : d.group === 2 ? "#48bb78" : "#ed8936");
+
+        node.append("text")
+            .text(d => d.id)
+            .attr("font-size", "12px")
+            .attr("dx", 15)
+            .attr("dy", 4);
+
+        simulation.on("tick", () => {
+            link
+                .attr("x1", d => d.source.x)
+                .attr("y1", d => d.source.y)
+                .attr("x2", d => d.target.x)
+                .attr("y2", d => d.target.y);
+
+            node
+                .attr("transform", d => `translate(${d.x},${d.y})`);
+        });
+
+        // Update metrics periodically (simulation)
+        setInterval(() => {
+            const deployments = parseInt(document.getElementById('total-deployments').innerText);
+            document.getElementById('total-deployments').innerText = deployments + Math.floor(Math.random() * 3);
+        }, 10000);
+    </script>
+</body>
+</html>

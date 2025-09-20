@@ -1,0 +1,97 @@
+#+TITLE: Experiment 002: Distributed Tracing Integration
+#+DATE: 2024-01-15
+#+AUTHOR: DSP-DR
+
+* Objective
+Integrate deployment events with distributed tracing systems (OpenTelemetry, Jaeger) to correlate deployments with performance impacts.
+
+* Hypothesis
+By correlating deployment events with distributed traces, we can:
+- Identify performance regressions immediately after deployment
+- Track deployment propagation across microservices
+- Measure real-world deployment impact on user transactions
+
+* Architecture Design
+
+** Trace Context Propagation
+#+BEGIN_SRC scheme :tangle trace-context.scm
+(define-module (deploy-ledger integrations tracing)
+  #:use-module (deploy-ledger core types)
+  #:export (create-deployment-span
+            inject-trace-context
+            correlate-with-traces))
+
+(define (create-deployment-span deployment)
+  "Create OpenTelemetry span for deployment"
+  `((trace-id . ,(generate-trace-id))
+    (span-id . ,(generate-span-id))
+    (operation . "deployment")
+    (service . ,(deployment-event-service-name deployment))
+    (version . ,(deployment-event-version deployment))
+    (attributes . ((deployment.type . ,(deployment-event-deployment-type deployment))
+                   (deployment.environment . ,(deployment-event-environment deployment))
+                   (deployment.status . ,(deployment-event-status deployment))))))
+
+(define (inject-trace-context deployment headers)
+  "Inject trace context into deployment webhooks"
+  (let ((span (create-deployment-span deployment)))
+    (assoc-set! headers "traceparent"
+                (format #f "00-~a-~a-01"
+                       (assoc-ref span 'trace-id)
+                       (assoc-ref span 'span-id)))))
+#+END_SRC
+
+** Metrics Collection
+#+BEGIN_SRC scheme :tangle metrics-collector.scm
+(define (collect-deployment-metrics deployment traces)
+  "Collect performance metrics from traces during deployment"
+  (let ((start-time (deployment-event-started deployment))
+        (end-time (or (deployment-event-completed deployment)
+                     (current-time))))
+    (filter-map
+     (lambda (trace)
+       (if (trace-in-window? trace start-time end-time)
+           `((latency . ,(trace-latency trace))
+             (error-rate . ,(trace-error-rate trace))
+             (throughput . ,(trace-throughput trace)))
+           #f))
+     traces)))
+#+END_SRC
+
+* Implementation Plan
+
+** Phase 1: OpenTelemetry Integration
+1. [ ] Add OTLP exporter support
+2. [ ] Create deployment spans
+3. [ ] Link deployment events to traces
+
+** Phase 2: Correlation Engine
+1. [ ] Query traces during deployment window
+2. [ ] Calculate performance deltas
+3. [ ] Generate impact reports
+
+** Phase 3: Real-time Monitoring
+1. [ ] Stream deployment events to tracing backend
+2. [ ] Set up alerts for performance degradation
+3. [ ] Auto-rollback triggers based on traces
+
+* Test Scenarios
+
+** Scenario 1: Canary Deployment Tracking
+Track how a canary deployment affects different percentiles of request latency.
+
+** Scenario 2: Service Mesh Integration
+Correlate deployment events with Istio/Linkerd metrics.
+
+** Scenario 3: Multi-region Deployment
+Track deployment propagation across regions using distributed traces.
+
+* Artifacts
+- [[./otlp-config.yaml][OpenTelemetry Configuration]]
+- [[./trace-samples.json][Sample Trace Data]]
+- [[./correlation-report.org][Deployment-Trace Correlation Report]]
+
+* Resources
+- [[https://opentelemetry.io/][OpenTelemetry Documentation]]
+- [[https://www.jaegertracing.io/][Jaeger Tracing]]
+- [[https://www.w3.org/TR/trace-context/][W3C Trace Context Specification]]
