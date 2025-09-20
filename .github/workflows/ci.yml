@@ -1,0 +1,192 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly on Sunday
+
+jobs:
+  test:
+    name: Test on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        guile-version: ['3.0', '2.2']
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Guile (Ubuntu)
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y guile-${{ matrix.guile-version }} guile-${{ matrix.guile-version }}-dev
+        sudo apt-get install -y guile-sqlite3
+
+    - name: Install Guile (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install guile
+        brew install sqlite3
+
+    - name: Check Guile version
+      run: guile --version
+
+    - name: Compile
+      run: make compile
+
+    - name: Run tests
+      run: make test
+
+    - name: Run examples
+      run: make examples
+      continue-on-error: true
+
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results-${{ matrix.os }}-guile-${{ matrix.guile-version }}
+        path: |
+          test-results/
+          *.log
+
+  lint:
+    name: Lint and Style Check
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y guile-3.0 guile-3.0-dev
+
+    - name: Check formatting
+      run: make format
+      continue-on-error: true
+
+    - name: Run linting
+      run: make lint
+      continue-on-error: true
+
+  coverage:
+    name: Code Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y guile-3.0 guile-3.0-dev guile-sqlite3
+
+    - name: Run coverage
+      run: make coverage
+      continue-on-error: true
+
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+      continue-on-error: true
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Build Docker image
+      run: make docker-build
+
+    - name: Test Docker image
+      run: |
+        docker run --rm guile-deploy-ledger:latest guile --version
+        docker run --rm -v $(pwd):/app guile-deploy-ledger:latest make test
+
+  documentation:
+    name: Build Documentation
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y guile-3.0 texlive-full pandoc emacs
+
+    - name: Build documentation
+      run: make docs
+      continue-on-error: true
+
+    - name: Build presentation
+      run: |
+        cd presentations/intro-to-deploy-ledger
+        make pdf
+      continue-on-error: true
+
+    - name: Upload documentation
+      uses: actions/upload-artifact@v3
+      with:
+        name: documentation
+        path: |
+          docs/
+          presentations/**/*.pdf
+
+  release:
+    name: Create Release Package
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y guile-3.0 guile-3.0-dev
+
+    - name: Create release
+      run: make release
+
+    - name: Upload release artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: release-package
+        path: dist/*.tar.gz
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy results to GitHub Security
+      uses: github/codeql-action/upload-sarif@v2
+      with:
+        sarif_file: 'trivy-results.sarif'
+      continue-on-error: true
