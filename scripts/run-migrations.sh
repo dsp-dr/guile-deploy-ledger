@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # run-migrations.sh - Run database migrations
 
-set -e
+# Don't exit on command failures - we handle them
+set +e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'

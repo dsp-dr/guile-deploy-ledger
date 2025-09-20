@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # preflight-check.sh - Pre-flight checks before build
 
-set -e
+# Don't exit on check failures - we track them
+set +e
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
