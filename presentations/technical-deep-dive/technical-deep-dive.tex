@@ -1,0 +1,613 @@
+% Created 2025-09-19 Fri 22:16
+% Intended LaTeX compiler: pdflatex
+\documentclass[presentation,aspectratio=169]{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\usetheme{metropolis}
+\usecolortheme{seahorse}
+\author{Engineering Team}
+\date{January 2024}
+\title{Guile Deploy Ledger - Technical Deep Dive}
+\subtitle{Architecture, Implementation, and Best Practices}
+\hypersetup{
+ pdfauthor={Engineering Team},
+ pdftitle={Guile Deploy Ledger - Technical Deep Dive},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 31.0.50 (Org mode 9.7.11)}, 
+ pdflang={English}}
+\begin{document}
+
+\maketitle
+\begin{frame}[label={sec:orgf81ae35},fragile]{Architecture Overview}
+ \begin{block}{System Layers}
+\begin{verbatim}
++--------------------------------------------------+
+|                  CLI Interface                   |
+|             (deploy-ledger cli main)             |
++--------------------------------------------------+
+|              Query & Metrics Layer               |
+|          (deploy-ledger query metrics)           |
++--------------------------------------------------+
+|                 Core Data Types                  |
+|            (deploy-ledger core types)            |
++--------------------------------------------------+
+|                Storage Abstraction               |
+|         (deploy-ledger storage sqlite)           |
++--------------------------------------------------+
+|                   SQLite Database                |
++--------------------------------------------------+
+\end{verbatim}
+\end{block}
+\begin{block}{Module Dependencies}
+\begin{verbatim}
+graph TD
+    CLI[CLI Commands] --> QM[Query/Metrics]
+    CLI --> Storage[Storage Layer]
+    QM --> Storage
+    QM --> Types[Core Types]
+    Storage --> Types
+    Export[Export Module] --> Storage
+    Export --> Types
+    Viz[Visualization] --> QM
+    Viz --> Storage
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org1e47bf2},fragile]{Data Model Design}
+ \begin{block}{SRFI-9 Records Architecture}
+\begin{verbatim}
+(define-record-type <deployment-event>
+  (make-deployment-event-internal
+    id service-name version environment
+    deployment-type started completed status
+    initiator metadata parent-id)
+  deployment-event?
+  (id deployment-event-id)
+  (service-name deployment-event-service-name)
+  ;; ... additional fields
+  )
+\end{verbatim}
+
+Benefits:
+\begin{itemize}
+\item Type safety at compile time
+\item Efficient memory layout
+\item Clear API contracts
+\item Immutability by default
+\end{itemize}
+\end{block}
+\begin{block}{Event Sourcing Pattern}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Deployments are append-only
+\item Status changes create new events
+\item Full audit trail preserved
+\item Time-travel queries possible
+\end{itemize}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+Deploy-v1.0 → Deploy-v1.1 → Rollback
+     ↓            ↓             ↓
+  Success     In-Progress    To-v1.0
+\end{verbatim}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Database Schema}
+\begin{verbatim}
+CREATE TABLE deployments (
+  id TEXT PRIMARY KEY,
+  service_name TEXT NOT NULL,
+  version TEXT NOT NULL,
+  environment TEXT NOT NULL,
+  deployment_type TEXT NOT NULL,
+  started INTEGER NOT NULL,
+  completed INTEGER,
+  status TEXT NOT NULL,
+  parent_id TEXT,
+  FOREIGN KEY (parent_id)
+    REFERENCES deployments(id)
+);
+
+CREATE INDEX idx_deployments_service
+  ON deployments(service_name);
+CREATE INDEX idx_deployments_started
+  ON deployments(started);
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org9b31d87},fragile]{Storage Layer}
+ \begin{block}{SQLite Backend Choice}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Zero configuration
+\item ACID compliance
+\item Excellent for embedded use
+\item Single file deployment
+\item WAL mode for concurrency
+\end{itemize}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Limited write concurrency
+\item Not suitable for >1GB/day
+\item No built-in replication
+\item Single-node limitation
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Transaction Management}
+\begin{verbatim}
+(define (with-transaction db thunk)
+  "Execute thunk within database transaction"
+  (sqlite-exec db "BEGIN TRANSACTION")
+  (catch #t
+    (lambda ()
+      (let ((result (thunk)))
+        (sqlite-exec db "COMMIT")
+        result))
+    (lambda args
+      (sqlite-exec db "ROLLBACK")
+      (apply throw args))))
+\end{verbatim}
+
+Key features:
+\begin{itemize}
+\item Automatic rollback on error
+\item Nested transaction support
+\item Consistent error handling
+\end{itemize}
+\end{block}
+\begin{block}{Prepared Statements}
+\begin{verbatim}
+(define (store-deployment! db deployment)
+  (let ((stmt (sqlite-prepare db
+    "INSERT INTO deployments
+     (id, service_name, version, ...)
+     VALUES (?, ?, ?, ...)")))
+    (sqlite-bind stmt 1
+      (deployment-event-id deployment))
+    ;; ... bind other parameters
+    (sqlite-step stmt)
+    (sqlite-finalize stmt)))
+\end{verbatim}
+
+Benefits:
+\begin{itemize}
+\item SQL injection prevention
+\item Performance optimization
+\item Type safety
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org1022611},fragile]{Query Engine}
+ \begin{block}{Metrics Calculation Pipeline}
+\begin{verbatim}
+(define* (calculate-mttr db service-name
+          #:key (period-days 30))
+  (let* ((failures (get-failures db service-name))
+         (recoveries (map find-recovery failures)))
+    (average (map time-difference
+                  failures recoveries))))
+\end{verbatim}
+
+Pipeline stages:
+\begin{enumerate}
+\item Data retrieval with filters
+\item Time-based aggregation
+\item Statistical calculation
+\item Result formatting
+\end{enumerate}
+\end{block}
+\begin{block}{Time-Series Analysis}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define (bucket-by-interval
+         events interval-seconds)
+  (group-by
+    (lambda (e)
+      (quotient
+        (time->unix e)
+        interval-seconds))
+    events))
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Hourly aggregations
+\item Daily summaries
+\item Weekly trends
+\item Monthly reports
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Pattern Detection}
+\begin{verbatim}
+(define (find-failure-patterns db)
+  (let ((failures (get-all-failures db)))
+    (identify-patterns
+      #:temporal (group-by-hour failures)
+      #:service (group-by-service failures)
+      #:type (group-by-deployment-type failures)
+      #:correlation (find-correlations failures))))
+\end{verbatim}
+
+Detects:
+\begin{itemize}
+\item Peak failure times
+\item Problematic services
+\item Risky deployment types
+\item Cascading failures
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org0afb0bd},fragile]{Performance Optimization}
+ \begin{block}{Caching Strategy}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define *metrics-cache*
+  (make-hash-table))
+
+(define (cached-metric key thunk)
+  (or (hash-ref *metrics-cache* key)
+      (let ((value (thunk)))
+        (hash-set! *metrics-cache*
+                  key value)
+        value)))
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Time-based expiry
+\item Event-based invalidation
+\item LRU eviction
+\item Manual flush
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Query Optimization}
+Techniques employed:
+\begin{enumerate}
+\item \alert{\alert{Index usage}}: All queries use covering indexes
+\item \alert{\alert{Batch operations}}: Minimize round-trips
+\item \alert{\alert{Lazy evaluation}}: Stream results when possible
+\item \alert{\alert{Query planning}}: EXPLAIN QUERY PLAN analysis
+\end{enumerate}
+
+\begin{verbatim}
+-- Optimized query with covering index
+SELECT service_name, COUNT(*), AVG(duration)
+FROM deployments
+WHERE started > ?
+GROUP BY service_name
+-- Uses idx_deployments_started
+\end{verbatim}
+\end{block}
+\begin{block}{Concurrency Model}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(sqlite-exec db
+  "PRAGMA journal_mode = WAL")
+(sqlite-exec db
+  "PRAGMA synchronous = NORMAL")
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Read connection pool
+\item Single write connection
+\item Automatic retry logic
+\item Connection health checks
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org28df934},fragile]{Integration Patterns}
+ \begin{block}{Webhook Processing}
+\begin{verbatim}
+(define (webhook-handler request)
+  (let* ((payload (parse-json-body request))
+         (deployment (webhook->deployment payload)))
+    (with-transaction db
+      (lambda ()
+        (store-deployment! db deployment)
+        (trigger-notifications deployment)
+        (update-metrics-cache deployment)))
+    (respond-200 "OK")))
+\end{verbatim}
+
+Features:
+\begin{itemize}
+\item Idempotent processing
+\item Signature validation
+\item Rate limiting
+\item Error recovery
+\end{itemize}
+\end{block}
+\begin{block}{Event Streaming}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define (publish-event event)
+  (for-each
+    (lambda (subscriber)
+      (send-event subscriber event))
+    *subscribers*))
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define (subscribe pattern handler)
+  (add-subscriber!
+    (make-subscription
+      #:pattern pattern
+      #:handler handler)))
+\end{verbatim}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Plugin Architecture}
+\begin{verbatim}
+(define-syntax define-plugin
+  (syntax-rules ()
+    ((define-plugin name init-proc cleanup-proc)
+     (register-plugin!
+       'name
+       (make-plugin
+         #:init init-proc
+         #:cleanup cleanup-proc)))))
+
+(define-plugin my-custom-metrics
+  (lambda () (display "Plugin initialized"))
+  (lambda () (display "Plugin cleanup")))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org0914b78},fragile]{Testing Strategy}
+ \begin{block}{Test Pyramid}
+\begin{verbatim}
+    /\        UI Tests
+   /  \       (5%)
+  /    \
+ /      \     Integration Tests
+/        \    (20%)
+/          \
+/            \ Unit Tests
++-----------+ (75%)
+\end{verbatim}
+\end{block}
+\begin{block}{Unit Testing with SRFI-64}
+\begin{verbatim}
+(test-group "deployment-event"
+  (test-assert "create deployment"
+    (let ((d (make-deployment-event
+              #:service-name "test"
+              #:version "1.0")))
+      (deployment-event? d)))
+
+  (test-equal "status update"
+    'success
+    (begin
+      (set-deployment-event-status! d 'success)
+      (deployment-event-status d))))
+\end{verbatim}
+\end{block}
+\begin{block}{Integration Testing}
+\begin{verbatim}
+(test-group "end-to-end"
+  (let ((db (open-test-database)))
+    (test-assert "deployment lifecycle"
+      (simulate-deployment-lifecycle db))
+    (test-assert "rollback scenario"
+      (simulate-rollback-scenario db))
+    (cleanup-test-database db)))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org95a6dd4},fragile]{Deployment Strategies}
+ \begin{block}{Zero-Downtime Deployment}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{enumerate}
+\item Deploy to blue
+\item Run health checks
+\item Switch traffic
+\item Keep green as backup
+\item Cleanup after validation
+\end{enumerate}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{enumerate}
+\item Deploy to 5\% traffic
+\item Monitor metrics
+\item Gradual increase
+\item Full rollout at 100\%
+\item Automatic rollback on errors
+\end{enumerate}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Rollback Strategies}
+\begin{verbatim}
+(define (intelligent-rollback service)
+  (let* ((current (get-current-version service))
+         (previous (get-last-stable-version service))
+         (impact (analyze-rollback-impact
+                   service current previous)))
+    (cond
+      ((high-impact? impact)
+       (coordinated-rollback service previous))
+      ((medium-impact? impact)
+       (staged-rollback service previous))
+      (else
+       (immediate-rollback service previous)))))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org799061c},fragile]{Monitoring \& Observability}
+ \begin{block}{Metrics Export}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+# HELP deployments_total Total deployments
+# TYPE deployments_total counter
+deployments_total{service="api"} 42
+
+# HELP deployment_duration_seconds
+# TYPE deployment_duration_seconds histogram
+deployment_duration_seconds_bucket{le="60"} 35
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define (create-span deployment)
+  (make-span
+    #:name "deployment"
+    #:attributes
+    `((service . ,service)
+      (version . ,version))))
+\end{verbatim}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Alerting Rules}
+\begin{verbatim}
+groups:
+- name: deployment_alerts
+  rules:
+  - alert: HighFailureRate
+    expr: deployment_success_rate < 0.9
+    for: 5m
+    annotations:
+      summary: "High deployment failure rate"
+
+  - alert: LongMTTR
+    expr: deployment_mttr_seconds > 1800
+    for: 10m
+    annotations:
+      summary: "MTTR exceeds 30 minutes"
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org16b6387},fragile]{Security Considerations}
+ \begin{block}{Authentication \& Authorization}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+(define (validate-token token)
+  (let ((claims (jwt-decode token)))
+    (and (valid-signature? token)
+         (not-expired? claims)
+         (authorized-scope? claims))))
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Viewer: Read-only access
+\item Deployer: Record deployments
+\item Admin: Full access
+\item Auditor: Export reports
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Data Protection}
+Measures implemented:
+\begin{enumerate}
+\item \alert{\alert{Encryption at rest}}: SQLCipher support
+\item \alert{\alert{TLS for transit}}: HTTPS only
+\item \alert{\alert{PII handling}}: Automatic redaction
+\item \alert{\alert{Audit logging}}: All modifications tracked
+\item \alert{\alert{Backup encryption}}: GPG encrypted backups
+\end{enumerate}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org0f10058},fragile]{Future Enhancements}
+ \begin{block}{Planned Features}
+\begin{columns}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Kubernetes operator
+\item GraphQL API
+\item Real-time streaming
+\item ML predictions
+\end{itemize}
+\end{column}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Multi-cluster federation
+\item GitOps integration
+\item Cost tracking
+\item SLO management
+\end{itemize}
+\end{column}
+\begin{column}{0.34\columnwidth}
+\begin{itemize}
+\item Auto-remediation
+\item Chaos engineering
+\item Compliance automation
+\item AI-driven insights
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Extension Points}
+\begin{verbatim}
+;; Custom storage backend
+(define-storage-backend postgresql
+  #:connect pg-connect
+  #:store pg-store
+  #:retrieve pg-retrieve)
+
+;; Custom metrics
+(define-metric custom-metric
+  #:calculate (lambda (db service)
+                ;; Custom calculation
+                ))
+
+;; Custom visualization
+(define-visualizer custom-viz
+  #:generate (lambda (data)
+               ;; Generate visualization
+               ))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org959f1c6}]{Q\&A}
+\begin{block}{Questions?}
+\begin{center}
+\begin{center}
+\includegraphics[width=0.5\textwidth]{./guile-logo.png}
+\end{center}
+
+Thank you for your attention!
+
+GitHub: \url{https://github.com/dsp-dr/guile-deploy-ledger}
+
+Documentation: \url{https://deploy-ledger.dev/docs}
+
+Contact: engineering@deploy-ledger.dev
+\end{center}
+\end{block}
+\end{frame}
+\end{document}

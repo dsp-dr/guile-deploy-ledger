@@ -1,0 +1,454 @@
+% Created 2025-09-19 Fri 22:16
+% Intended LaTeX compiler: pdflatex
+\documentclass[presentation,aspectratio=169]{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\usetheme{metropolis}
+\usecolortheme{crane}
+\author{DSP-DR}
+\date{January 2024}
+\title{Guile Deploy Ledger}
+\subtitle{A Comprehensive Deployment Tracking System}
+\hypersetup{
+ pdfauthor={DSP-DR},
+ pdftitle={Guile Deploy Ledger},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 31.0.50 (Org mode 9.7.11)}, 
+ pdflang={English}}
+\begin{document}
+
+\maketitle
+\begin{frame}[label={sec:org71f3a1d}]{Introduction}
+\begin{block}{The Challenge}
+\begin{itemize}[<+->]
+\item Modern systems require frequent deployments
+\item Multiple deployment strategies (blue-green, canary, rolling)
+\item Complex service dependencies
+\item Need for comprehensive audit trails
+\item Lack of unified tracking across environments
+\end{itemize}
+\end{block}
+\begin{block}{Our Solution: Deployment Ledger}
+A \alert{ledger-based} deployment tracking system that:
+
+\begin{itemize}[<+->]
+\item Records every deployment event immutably
+\item Tracks rollbacks with full context
+\item Calculates key metrics (MTTR, frequency, success rate)
+\item Supports both monolithic and microservice architectures
+\item Provides rich visualization and reporting
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgb68600f},fragile]{Architecture}
+ \begin{block}{System Architecture}
+\begin{verbatim}
++----------------+     +----------------+     +----------------+
+|                |     |                |     |                |
+|   CLI Tool     |<--->|  Core Engine   |<--->|  SQLite DB     |
+|                |     |                |     |                |
++----------------+     +----------------+     +----------------+
+       ^                       |                       ^
+       |                       v                       |
++----------------+     +----------------+     +----------------+
+|                |     |                |     |                |
+| CI/CD Webhooks |     | Query Interface|     |  Exporters     |
+|                |     |                |     |                |
++----------------+     +----------------+     +----------------+
+\end{verbatim}
+\end{block}
+\begin{block}{Data Model}
+\begin{verbatim}
+(define-record-type <deployment-event>
+  (make-deployment-event id service version
+                        environment type ...)
+  deployment-event?
+  (id deployment-event-id)
+  (service deployment-event-service)
+  (version deployment-event-version)
+  (environment deployment-event-environment)
+  (type deployment-event-type)
+  ...)
+\end{verbatim}
+
+Key features:
+\begin{itemize}
+\item Immutable events
+\item Parent-child relationships
+\item Rich metadata support
+\item Time-series friendly
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgb2085a8},fragile]{Features}
+ \begin{block}{Core Capabilities}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Blue-green deployments
+\item Canary releases
+\item Rolling updates
+\item Big-bang deployments
+\item Feature flags
+\end{itemize}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Deployment frequency
+\item Success rates
+\item MTTR calculations
+\item Failure pattern detection
+\item Health scores
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Query Capabilities}
+\begin{verbatim}
+# Find all failed deployments
+guile-deploy-ledger list-deployments \
+  --status failure \
+  --from "2024-01-01"
+
+# Calculate service metrics
+guile-deploy-ledger show-metrics \
+  --service payment-service \
+  --metric mttr \
+  --period 30
+\end{verbatim}
+\end{block}
+\begin{block}{Visualization Support}
+\begin{columns}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Timeline views
+\item Gantt charts
+\item Flow diagrams
+\end{itemize}
+\end{column}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Dependency graphs
+\item Service topology
+\item Impact analysis
+\end{itemize}
+\end{column}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item D3.js dashboards
+\item Real-time updates
+\item Drill-down views
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org3e547e4},fragile]{Demo}
+ \begin{block}{Live Demo: Recording a Deployment}
+\begin{verbatim}
+# Record a blue-green deployment
+guile-deploy-ledger record-deployment \
+  --service api-gateway \
+  --version 2.3.0 \
+  --environment production \
+  --type blue-green \
+  --status success
+\end{verbatim}
+
+Output:
+\begin{verbatim}
+Deployment recorded: deploy-1705339200-123456
+\end{verbatim}
+\end{block}
+\begin{block}{Live Demo: Tracking a Rollback}
+\begin{verbatim}
+# Record a rollback event
+guile-deploy-ledger record-rollback \
+  --service payment-service \
+  --from-version 3.1.0 \
+  --to-version 3.0.5 \
+  --reason "Performance degradation detected"
+\end{verbatim}
+
+Output:
+\begin{verbatim}
+Rollback recorded: rollback-1705339300-654321
+\end{verbatim}
+\end{block}
+\begin{block}{Dashboard Preview}
+\begin{center}
+\includegraphics[width=0.9\textwidth]{./dashboard-screenshot.png}
+\end{center}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgb4abe2c},fragile]{Use Cases}
+ \begin{block}{Monolithic Applications}
+Perfect for tracking:
+\begin{itemize}
+\item Version upgrades
+\item Database migrations
+\item Configuration changes
+\item Infrastructure updates
+\end{itemize}
+
+Example:
+\begin{verbatim}
+(record-monolith-deployment
+  #:application "legacy-erp"
+  #:version "2024.1.15"
+  #:deployment-window "02:00-04:00 UTC"
+  #:downtime-expected #t)
+\end{verbatim}
+\end{block}
+\begin{block}{Microservices Architecture}
+Track complex deployments:
+\begin{itemize}
+\item Service mesh updates
+\item Coordinated deployments
+\item Dependency chains
+\item Circuit breaker states
+\end{itemize}
+
+\begin{verbatim}
+graph LR
+    A[API Gateway] --> B[User Service]
+    A --> C[Payment Service]
+    B --> D[Database]
+    C --> D
+    C --> E[Message Queue]
+\end{verbatim}
+\end{block}
+\begin{block}{Compliance \& Auditing}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Complete audit trail
+\item Change attribution
+\item Rollback reasons
+\item Approval workflows
+\item Time-stamped events
+\end{itemize}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item SOC2 compliance
+\item Change advisory board
+\item Post-mortem analysis
+\item Deployment windows
+\item SLA tracking
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgfa5ded4},fragile]{Integration}
+ \begin{block}{CI/CD Integration}
+\begin{block}{GitHub Actions}
+\begin{verbatim}
+- name: Record Deployment
+  run: |
+    guile-deploy-ledger record-deployment \
+      --service ${{ github.repository }} \
+      --version ${{ github.sha }} \
+      --environment production
+\end{verbatim}
+\end{block}
+\begin{block}{Jenkins}
+\begin{verbatim}
+stage('Deploy') {
+  sh 'deploy.sh'
+  sh 'guile-deploy-ledger record-deployment ...'
+}
+\end{verbatim}
+\end{block}
+\end{block}
+\begin{block}{Monitoring Integration}
+Export metrics to monitoring systems:
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+deployment_total{service="api"} 42
+deployment_success_rate{service="api"} 0.94
+deployment_mttr_seconds{service="api"} 750
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item Pre-built dashboards
+\item Alert rules
+\item Annotation support
+\item Variable templates
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgb21b78e},fragile]{Advanced Features}
+ \begin{block}{Machine Learning Integration}
+Predictive capabilities:
+\begin{itemize}
+\item Failure prediction
+\item Optimal deployment windows
+\item Resource requirement forecasting
+\item Anomaly detection
+\end{itemize}
+
+\begin{verbatim}
+model = DeploymentPredictor()
+risk_score = model.predict(
+    service="payment-service",
+    deployment_type="canary",
+    time_of_day=14,
+    day_of_week="Friday"
+)
+# Output: 0.23 (Low risk)
+\end{verbatim}
+\end{block}
+\begin{block}{Chaos Engineering}
+Track chaos experiments:
+\begin{itemize}
+\item Failure injection recording
+\item Recovery time measurement
+\item Blast radius analysis
+\item Hypothesis validation
+\end{itemize}
+\end{block}
+\begin{block}{Plugin Architecture}
+Extend with custom strategies:
+
+\begin{verbatim}
+(define-deployment-strategy my-custom-strategy
+  (lambda (deployment)
+    ;; Custom deployment logic
+    ...))
+
+(register-strategy! 'custom my-custom-strategy)
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org7d7a195}]{Roadmap}
+\begin{block}{Q1 2024}
+\begin{itemize}
+\item[{$\boxtimes$}] Core deployment tracking
+\item[{$\boxtimes$}] SQLite storage backend
+\item[{$\boxtimes$}] CLI interface
+\item[{$\square$}] Basic webhook support
+\item[{$\square$}] Prometheus exporter
+\end{itemize}
+\end{block}
+\begin{block}{Q2 2024}
+\begin{itemize}
+\item[{$\square$}] Kubernetes operator
+\item[{$\square$}] Real-time streaming
+\item[{$\square$}] Multi-region support
+\item[{$\square$}] GraphQL API
+\item[{$\square$}] Mobile app
+\end{itemize}
+\end{block}
+\begin{block}{Future Vision}
+\begin{columns}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Auto-remediation
+\item Predictive rollbacks
+\item Intelligent scheduling
+\end{itemize}
+\end{column}
+\begin{column}{0.33\columnwidth}
+\begin{itemize}
+\item Multi-cluster tracking
+\item Cross-region coordination
+\item Global dashboards
+\end{itemize}
+\end{column}
+\begin{column}{0.34\columnwidth}
+\begin{itemize}
+\item IDE plugins
+\item ChatOps integration
+\item Terraform provider
+\end{itemize}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org3744405},fragile]{Getting Started}
+ \begin{block}{Installation}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+guix package -f .guix.scm
+\end{verbatim}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{verbatim}
+git clone https://github.com/dsp-dr/guile-deploy-ledger
+cd guile-deploy-ledger
+gmake install
+\end{verbatim}
+\end{column}
+\end{columns}
+\end{block}
+\begin{block}{Quick Start}
+\begin{enumerate}
+\item Initialize the database:
+\begin{verbatim}
+guile-deploy-ledger init
+\end{verbatim}
+
+\item Record your first deployment:
+\begin{verbatim}
+guile-deploy-ledger record-deployment \
+  --service my-app --version 1.0.0 \
+  --environment staging --type rolling
+\end{verbatim}
+
+\item View metrics:
+\begin{verbatim}
+guile-deploy-ledger show-metrics --service my-app
+\end{verbatim}
+\end{enumerate}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org363fe9a}]{Conclusion}
+\begin{block}{Key Benefits}
+\begin{itemize}[<+->]
+\item \alert{Comprehensive} tracking of all deployment events
+\item \alert{Immutable} audit trail for compliance
+\item \alert{Rich} metrics and analytics
+\item \alert{Flexible} integration options
+\item \alert{Extensible} plugin architecture
+\item \alert{Open source} and community-driven
+\end{itemize}
+\end{block}
+\begin{block}{Thank You!}
+\begin{columns}
+\begin{column}{0.5\columnwidth}
+\begin{itemize}
+\item GitHub: \url{https://github.com/dsp-dr/guile-deploy-ledger}
+\item Documentation: \url{https://deploy-ledger.dev}
+\item Email: dsp-dr@example.com
+\end{itemize}
+\end{column}
+\begin{column}{0.5\columnwidth}
+\begin{center}
+\begin{center}
+\includegraphics[width=0.3\textwidth]{./qr-code.png}
+\end{center}
+
+Scan for demo access
+\end{center}
+\end{column}
+\end{columns}
+\end{block}
+\end{frame}
+\end{document}

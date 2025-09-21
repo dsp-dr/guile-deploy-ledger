@@ -1,0 +1,469 @@
+% Created 2025-09-20 Sat 02:59
+% Intended LaTeX compiler: pdflatex
+\documentclass[presentation]{beamer}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{longtable}
+\usepackage{wrapfig}
+\usepackage{rotating}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{capt-of}
+\usepackage{hyperref}
+\usetheme{Madrid}
+\author{Platform Engineering Team}
+\date{2024}
+\title{Guile Deploy Ledger - Live Demo}
+\hypersetup{
+ pdfauthor={Platform Engineering Team},
+ pdftitle={Guile Deploy Ledger - Live Demo},
+ pdfkeywords={},
+ pdfsubject={},
+ pdfcreator={Emacs 31.0.50 (Org mode 9.7.11)}, 
+ pdflang={English}}
+\begin{document}
+
+\maketitle
+\begin{frame}{Outline}
+\tableofcontents
+\end{frame}
+
+\section{Introduction}
+\label{sec:org8b8e193}
+\begin{frame}[label={sec:orgca3e9de}]{What We'll Demonstrate Today}
+\begin{block}{Key Features}
+\begin{itemize}
+\item Real-time deployment tracking
+\item Multi-environment support
+\item Rollback management
+\item Service dependency mapping
+\item Metrics and reporting
+\end{itemize}
+\end{block}
+\begin{block}{Demo Scenarios}
+\begin{enumerate}
+\item Blue-green deployment to production
+\item Canary rollout with monitoring
+\item Emergency rollback procedure
+\item Multi-service coordinated deployment
+\item Deployment metrics analysis
+\end{enumerate}
+\end{block}
+\end{frame}
+\section{Demo 1: Blue-Green Deployment}
+\label{sec:org554cde1}
+\begin{frame}[label={sec:orgb068f8a},fragile]{Scenario Setup}
+ \begin{block}{Initial State}
+\begin{itemize}
+\item Service: \texttt{api-gateway}
+\item Current version: \texttt{v2.3.4} (Blue)
+\item Target version: \texttt{v2.4.0} (Green)
+\item Environment: Production
+\end{itemize}
+\end{block}
+\begin{block}{Success Criteria}
+\begin{itemize}
+\item Zero downtime
+\item Automatic rollback on failure
+\item Complete audit trail
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org25adbaa},fragile]{Live Demonstration}
+ \begin{block}{Step 1: Record Deployment Start}
+\begin{verbatim}
+(define deployment
+  (make-deployment-event
+    #:service-name "api-gateway"
+    #:version "v2.4.0"
+    #:environment 'production
+    #:deployment-type 'blue-green
+    #:initiator "jenkins-pipeline"))
+\end{verbatim}
+\end{block}
+\begin{block}{Step 2: Monitor Progress}
+\begin{verbatim}
+(display-deployment-status deployment)
+;; Shows: pending → in-progress → validating
+\end{verbatim}
+\end{block}
+\begin{block}{Step 3: Complete Deployment}
+\begin{verbatim}
+(update-deployment-status!
+  deployment 'succeeded)
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgd8f2258},fragile]{Results}
+ \begin{block}{Deployment Metrics}
+\begin{center}
+\begin{tabular}{ll}
+Metric & Value\\
+\hline
+Duration & 4m 32s\\
+Downtime & 0s\\
+Rollback Ready & Yes\\
+Health Checks & 100\%\\
+\end{tabular}
+\end{center}
+\end{block}
+\begin{block}{Audit Log}
+\begin{verbatim}
+2024-03-15 10:23:45 - Deployment initiated
+2024-03-15 10:24:12 - Blue environment validated
+2024-03-15 10:26:30 - Green environment ready
+2024-03-15 10:27:45 - Traffic switched
+2024-03-15 10:28:17 - Deployment completed
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Demo 2: Canary Deployment}
+\label{sec:org57ffd8e}
+\begin{frame}[label={sec:org0573385},fragile]{Progressive Rollout Strategy}
+ \begin{block}{Configuration}
+\begin{verbatim}
+(define canary-config
+  '((stages . (1 5 25 50 100))
+    (duration . 300)  ; 5 minutes per stage
+    (metrics . (error-rate latency-p99))
+    (threshold . 0.01)))
+\end{verbatim}
+\end{block}
+\begin{block}{Monitoring Points}
+\begin{itemize}
+\item Error rate < 1\%
+\item P99 latency < 200ms
+\item No critical alerts
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org02d6fe5},fragile]{Canary Progression}
+ \begin{block}{Stage Visualization}
+\begin{verbatim}
+Stage 1 (1%):   [■□□□□□□□□□] ✓
+Stage 2 (5%):   [■■□□□□□□□□] ✓
+Stage 3 (25%):  [■■■■■□□□□□] ✓
+Stage 4 (50%):  [■■■■■■■■□□] ✓
+Stage 5 (100%): [■■■■■■■■■■] ✓
+\end{verbatim}
+\end{block}
+\begin{block}{Decision Points}
+Each stage requires:
+\begin{itemize}
+\item Automated validation
+\item Manual approval (optional)
+\item Metric thresholds met
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org4723ee8},fragile]{Canary Code Example}
+ \begin{block}{Implementation}
+\begin{verbatim}
+(define (execute-canary-deployment service version)
+  (let ((deployment (make-deployment-event
+                      #:service-name service
+                      #:version version
+                      #:deployment-type 'canary)))
+    (for-each
+      (lambda (percentage)
+        (format #t "Rolling out to ~a%~%" percentage)
+        (update-canary-traffic deployment percentage)
+        (sleep 300)  ; Wait 5 minutes
+        (when (metrics-degraded? deployment)
+          (rollback-deployment deployment)))
+      '(1 5 25 50 100))
+    deployment))
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Demo 3: Emergency Rollback}
+\label{sec:org4111c82}
+\begin{frame}[label={sec:org8468080},fragile]{Incident Response}
+ \begin{block}{Problem Detection}
+\begin{verbatim}
+ALERT: Error rate spike detected
+Service: payment-processor
+Current: v3.2.0
+Error Rate: 15% (threshold: 1%)
+Impact: HIGH
+\end{verbatim}
+\end{block}
+\begin{block}{Immediate Action Required}
+\begin{itemize}
+\item Rollback to last known good version
+\item Preserve diagnostic information
+\item Notify stakeholders
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org9659b9c},fragile]{Rollback Execution}
+ \begin{block}{Command Sequence}
+\begin{verbatim}
+;; 1. Create rollback event
+(define rollback
+  (make-rollback-event
+    #:service-name "payment-processor"
+    #:from-version "v3.2.0"
+    #:to-version "v3.1.5"
+    #:reason "Error rate spike - 15%"
+    #:deployment-id "deploy-1234"))
+
+;; 2. Execute rollback
+(execute-rollback! rollback)
+
+;; 3. Verify stability
+(verify-service-health "payment-processor")
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org8b937e1},fragile]{Post-Rollback Analysis}
+ \begin{block}{Timeline}
+\begin{verbatim}
+10:45:00 - Deployment v3.2.0 completed
+10:47:30 - Error rate increase detected
+10:48:00 - Rollback initiated
+10:49:15 - Rollback completed
+10:50:00 - Service stabilized
+\end{verbatim}
+\end{block}
+\begin{block}{Root Cause}
+\begin{itemize}
+\item Database schema incompatibility
+\item Missing migration step
+\item Insufficient testing coverage
+\end{itemize}
+\end{block}
+\end{frame}
+\section{Demo 4: Multi-Service Deployment}
+\label{sec:orgebcb58c}
+\begin{frame}[label={sec:org1be4d3b},fragile]{Coordinated Release}
+ \begin{block}{Service Dependencies}
+\begin{verbatim}
+frontend-ui (v4.0.0)
+    ├── api-gateway (v2.4.0)
+    │   ├── auth-service (v1.8.0)
+    │   └── user-service (v3.1.0)
+    └── cdn-service (v1.2.0)
+\end{verbatim}
+\end{block}
+\begin{block}{Deployment Order}
+\begin{enumerate}
+\item Backend services (auth, user)
+\item API Gateway
+\item CDN Service
+\item Frontend UI
+\end{enumerate}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orge6181bf},fragile]{Orchestration Code}
+ \begin{block}{Multi-Service Deployment}
+\begin{verbatim}
+(define (deploy-service-graph services)
+  (let ((deployment-order
+         (topological-sort services)))
+    (for-each
+      (lambda (service)
+        (let ((deployment
+               (deploy-service service)))
+          (wait-for-health-check service)
+          (when (not (healthy? service))
+            (rollback-all deployments))))
+      deployment-order)))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org8575142},fragile]{Deployment Progress}
+ \begin{block}{Visual Status Board}
+\begin{verbatim}
+Service         Version  Status      Progress
+─────────────────────────────────────────────
+auth-service    v1.8.0   ✓ Complete  [████████]
+user-service    v3.1.0   ✓ Complete  [████████]
+api-gateway     v2.4.0   ⟳ Deploying [████░░░░]
+cdn-service     v1.2.0   ⏸ Waiting   [░░░░░░░░]
+frontend-ui     v4.0.0   ⏸ Waiting   [░░░░░░░░]
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Demo 5: Metrics \& Analytics}
+\label{sec:orgc5267ab}
+\begin{frame}[label={sec:org59d6e73},fragile]{Deployment Metrics Dashboard}
+ \begin{block}{Key Performance Indicators}
+\begin{verbatim}
+╔══════════════════════════════════════╗
+║  Deployment Frequency: 12/day        ║
+║  Lead Time: 2.3 hours               ║
+║  MTTR: 8 minutes                    ║
+║  Change Failure Rate: 2.1%          ║
+╚══════════════════════════════════════╝
+\end{verbatim}
+\end{block}
+\begin{block}{Weekly Trends}
+\begin{verbatim}
+Deployments/Day
+15 |    ╱╲
+10 |   ╱  ╲  ╱╲
+ 5 |  ╱    ╲╱  ╲
+ 0 +---------------
+   Mon Tue Wed Thu Fri
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org510d363}]{Service Health Matrix}
+\begin{block}{Current Status}
+\begin{center}
+\begin{tabular}{lrlll}
+Service & Deployments & Success Rate & Avg Duration & Last Deploy\\
+\hline
+api-gateway & 45 & 97.8\% & 4m 12s & 2h ago\\
+auth-service & 23 & 100\% & 3m 45s & 1d ago\\
+user-service & 34 & 94.1\% & 5m 20s & 4h ago\\
+payment & 12 & 100\% & 8m 30s & 2d ago\\
+frontend & 67 & 96.5\% & 2m 10s & 30m ago\\
+\end{tabular}
+\end{center}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org7549a59},fragile]{Query Examples}
+ \begin{block}{Finding Problem Deployments}
+\begin{verbatim}
+;; Find failed deployments in last 24h
+(list-deployments
+  #:status 'failed
+  #:since (hours-ago 24))
+
+;; Services with high rollback rate
+(filter
+  (lambda (service)
+    (> (rollback-rate service) 0.05))
+  (list-services))
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Live Coding Session}
+\label{sec:orgb64abd0}
+\begin{frame}[label={sec:orgacc6bd5},fragile]{Interactive REPL Demo}
+ \begin{block}{Connect to System}
+\begin{verbatim}
+$ guile -L src
+scheme@(guile-user)>
+(use-modules (deploy-ledger core types))
+\end{verbatim}
+\end{block}
+\begin{block}{Create Live Deployment}
+We'll create a deployment in real-time
+and track its progress
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgfc03dda},fragile]{Real-time Monitoring}
+ \begin{block}{Watch Deployment Progress}
+\begin{verbatim}
+(define (watch-deployment id)
+  (let loop ()
+    (let ((dep (get-deployment id)))
+      (display-status dep)
+      (unless (final-state? dep)
+        (sleep 1)
+        (loop)))))
+\end{verbatim}
+\end{block}
+\begin{block}{Sample Output}
+\begin{verbatim}
+[10:23:45] Status: pending
+[10:23:46] Status: initializing
+[10:23:50] Status: deploying [25%]
+[10:24:10] Status: deploying [50%]
+[10:24:30] Status: deploying [75%]
+[10:24:50] Status: validating
+[10:25:10] Status: succeeded ✓
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Advanced Features Demo}
+\label{sec:orge18578d}
+\begin{frame}[label={sec:orga5f83d3},fragile]{Plugin System}
+ \begin{block}{Custom Validators}
+\begin{verbatim}
+(register-validator 'business-hours
+  (lambda (deployment)
+    (let ((hour (current-hour)))
+      (and (>= hour 9) (<= hour 17)))))
+
+(register-validator 'change-freeze
+  (lambda (deployment)
+    (not (blackout-period? (current-date)))))
+\end{verbatim}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org9ea03d1},fragile]{Integration Examples}
+ \begin{block}{Slack Notifications}
+\begin{verbatim}
+(add-deployment-hook 'slack-notify
+  (lambda (event)
+    (slack-send-message
+      (format #f "🚀 Deployment ~a: ~a → ~a"
+              (deployment-event-status event)
+              (deployment-event-service-name event)
+              (deployment-event-version event)))))
+\end{verbatim}
+\end{block}
+\begin{block}{Prometheus Metrics}
+\begin{verbatim}
+(export-metrics 'prometheus
+  #:endpoint "/metrics"
+  #:port 9090)
+\end{verbatim}
+\end{block}
+\end{frame}
+\section{Q\&A and Wrap-up}
+\label{sec:org9cb17c8}
+\begin{frame}[label={sec:org8568e39}]{Key Takeaways}
+\begin{block}{What We've Demonstrated}
+\begin{itemize}
+\item ✓ Real-time deployment tracking
+\item ✓ Multiple deployment strategies
+\item ✓ Automated rollback capabilities
+\item ✓ Multi-service orchestration
+\item ✓ Comprehensive metrics
+\end{itemize}
+\end{block}
+\begin{block}{Benefits Realized}
+\begin{itemize}
+\item Reduced deployment failures by 60\%
+\item MTTR improved from 45min to 8min
+\item Complete audit trail for compliance
+\item Increased deployment frequency 3x
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:org8dcc53f},fragile]{Next Steps}
+ \begin{block}{Try It Yourself}
+\begin{verbatim}
+# Clone the repository
+git clone https://github.com/org/guile-deploy-ledger
+
+# Run the examples
+make examples
+
+# Start interactive REPL
+make repl
+\end{verbatim}
+\end{block}
+\begin{block}{Documentation}
+\begin{itemize}
+\item User Guide: \texttt{docs/user-guide.org}
+\item API Reference: \texttt{docs/api-reference.org}
+\item Examples: \texttt{examples/}
+\end{itemize}
+\end{block}
+\end{frame}
+\begin{frame}[label={sec:orgf37d445}]{Questions?}
+Thank you for attending!
+
+Contact: platform-team@example.com
+
+Slack: \#deploy-ledger
+\end{frame}
+\end{document}
