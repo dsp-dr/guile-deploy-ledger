@@ -36,10 +36,10 @@ echo ""
 
 # Check Claude Config
 echo "6. Claude Desktop Config:"
-if [ -f ~/.config/Claude/claude_desktop_config.json ]; then
-    echo "   ✓ Config exists at ~/.config/Claude/claude_desktop_config.json"
+if [ -f ~/.config/claude/claude_desktop_config.json ]; then
+    echo "   ✓ Config exists at ~/.config/claude/claude_desktop_config.json"
     echo "   MCP Servers configured:"
-    cat ~/.config/Claude/claude_desktop_config.json | grep '"deploy-ledger"' && echo "   ✓ deploy-ledger server configured"
+    cat ~/.config/claude/claude_desktop_config.json | grep '"deploy-ledger"' && echo "   ✓ deploy-ledger server configured"
 else
     echo "   ✗ Config not found"
 fi

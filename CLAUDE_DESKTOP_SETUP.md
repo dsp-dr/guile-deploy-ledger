@@ -11,7 +11,7 @@ Download and install Claude Desktop from: https://claude.ai/download
 Add the following to your Claude Desktop configuration file:
 
 **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Linux**: `~/.config/Claude/claude_desktop_config.json`
+**Linux/FreeBSD**: `~/.config/claude/claude_desktop_config.json` (note: lowercase 'claude')
 **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
