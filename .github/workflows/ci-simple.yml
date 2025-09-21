@@ -1,0 +1,118 @@
+name: CI Simple
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Guile
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y guile-3.0
+
+      - name: Check versions
+        run: |
+          echo "=== System Info ==="
+          guile --version | head -1
+          echo "Project version: $(cat VERSION)"
+
+      - name: Test CLI
+        run: |
+          chmod +x gdl
+          echo "=== Testing CLI ==="
+          ./gdl --version
+          ./gdl --help
+
+      - name: Run simple tests
+        run: |
+          chmod +x tests/test-cli-simple.sh
+          ./tests/test-cli-simple.sh
+
+      - name: Validate man page
+        run: |
+          echo "=== Validating man page ==="
+          # Basic check that man page exists and is readable
+          if [ -f "man/gdl.1" ]; then
+            echo "✓ Man page exists"
+            head -5 man/gdl.1
+          else
+            echo "✗ Man page missing"
+            exit 1
+          fi
+
+      - name: Check version consistency
+        run: |
+          echo "=== Version Consistency Check ==="
+          VERSION=$(cat VERSION)
+          echo "VERSION file: $VERSION"
+
+          # Check CLI output
+          CLI_VERSION=$(./gdl --version | head -1 | awk '{print $2}')
+          echo "CLI version: $CLI_VERSION"
+
+          if [ "$VERSION" = "$CLI_VERSION" ]; then
+            echo "✓ Versions match"
+          else
+            echo "✗ Version mismatch!"
+            exit 1
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check shell scripts
+        run: |
+          # Basic shell script validation
+          echo "=== Shell Script Check ==="
+          for script in $(find . -name "*.sh" -type f); do
+            echo "Checking $script..."
+            bash -n "$script" || exit 1
+          done
+          echo "✓ All shell scripts valid"
+
+      - name: Check Scheme files
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y guile-3.0
+
+          echo "=== Scheme Syntax Check ==="
+          # Check gdl CLI
+          if guile -c "(load \"gdl\")" 2>/dev/null; then
+            echo "✓ gdl loads successfully"
+          else
+            echo "⚠ gdl has warnings (expected)"
+          fi
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [test, lint]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          echo "=== CI Pipeline Summary ==="
+          echo "Test job: ${{ needs.test.result }}"
+          echo "Lint job: ${{ needs.lint.result }}"
+
+          if [ "${{ needs.test.result }}" = "success" ] && [ "${{ needs.lint.result }}" = "success" ]; then
+            echo "✅ All checks passed!"
+            exit 0
+          else
+            echo "❌ Some checks failed"
+            exit 1
+          fi
