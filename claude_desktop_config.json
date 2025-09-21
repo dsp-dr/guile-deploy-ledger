@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "deploy-ledger": {
+      "command": "node",
+      "args": [
+        "/home/dsp-dr/ghq/github.com/dsp-dr/guile-deploy-ledger/mcp-server/server.js"
+      ],
+      "env": {
+        "DEPLOY_LEDGER_ROOT": "/home/dsp-dr/ghq/github.com/dsp-dr/guile-deploy-ledger",
+        "DEPLOY_LEDGER_DB": "/home/dsp-dr/.deploy-ledger/deployments.db",
+        "GUILE_PATH": "guile"
+      }
+    }
+  }
+}
