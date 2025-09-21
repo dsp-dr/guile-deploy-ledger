@@ -1,0 +1,284 @@
+#!/usr/bin/env guile
+!#
+;;; guile-deploy-ledger - Main CLI entry point
+;;; Copyright (C) 2025 Daria Pascal (dsp-dr)
+;;; Licensed under GPLv3+
+
+(use-modules (ice-9 getopt-long)
+             (ice-9 format)
+             (ice-9 match)
+             (ice-9 rdelim)
+             (ice-9 textual-ports)
+             (srfi srfi-1)
+             (srfi srfi-19)
+             (deploy-ledger core)
+             (deploy-ledger storage sqlite)
+             (deploy-ledger events)
+             (deploy-ledger metrics)
+             (deploy-ledger visualization)
+             (deploy-ledger api))
+
+(define (read-version-file)
+  (call-with-input-file "VERSION"
+    (lambda (port)
+      (string-trim-both (get-line port)))))
+
+(define version (read-version-file))
+
+(define option-spec
+  '((help      (single-char #\h) (value #f))
+    (version   (single-char #\v) (value #f))
+    (database  (single-char #\d) (value #t))
+    (format    (single-char #\f) (value #t))
+    (quiet     (single-char #\q) (value #f))
+    (verbose   (value #f))
+    (config    (value #t))
+    ;; Command-specific options
+    (service   (value #t))
+    (environment (value #t))
+    (type      (value #t))
+    (status    (value #t))
+    (initiator (value #t))
+    (reason    (value #t))
+    (from-version (value #t))
+    (to-version (value #t))
+    (deployment-id (value #t))
+    (metric    (value #t))
+    (period    (value #t))
+    (limit     (value #t))
+    (since     (value #t))
+    (until     (value #t))
+    (output    (value #t))
+    (width     (value #t))
+    (height    (value #t))))
+
+(define (display-version)
+  (format #t "guile-deploy-ledger ~a~%" version)
+  (format #t "Event-sourced deployment tracking system~%")
+  (format #t "Copyright (C) 2024 DSP-DR~%")
+  (format #t "License GPLv3+: GNU GPL version 3 or later~%"))
+
+(define (display-help)
+  (system "guile src/cli-help.scm"))
+
+(define (get-database-path options)
+  (or (option-ref options 'database #f)
+      (getenv "DEPLOY_LEDGER_DB")
+      (string-append (getenv "HOME") "/.deploy-ledger/deployments.db")))
+
+(define (execute-command command options args)
+  (let ((db-path (get-database-path options))
+        (format-type (or (option-ref options 'format #f) "json"))
+        (quiet (option-ref options 'quiet #f))
+        (verbose (option-ref options 'verbose #f)))
+
+    (case (string->symbol command)
+      ((record-deployment)
+       (record-deployment-command options db-path))
+
+      ((record-rollback)
+       (record-rollback-command options db-path))
+
+      ((list-deployments)
+       (list-deployments-command options db-path format-type))
+
+      ((get-deployment)
+       (get-deployment-command options db-path format-type))
+
+      ((show-metrics)
+       (show-metrics-command options db-path format-type))
+
+      ((analyze)
+       (analyze-command options db-path format-type))
+
+      ((health)
+       (health-check-command options db-path format-type))
+
+      ((export)
+       (export-command options db-path))
+
+      ((visualize)
+       (visualize-command options db-path))
+
+      ((server)
+       (start-api-server options db-path))
+
+      (else
+       (format #t "Unknown command: ~a~%" command)
+       (display-help)
+       2))))
+
+(define (record-deployment-command options db-path)
+  (let ((service (option-ref options 'service #f))
+        (version (option-ref options 'version #f))
+        (environment (option-ref options 'environment #f))
+        (deployment-type (option-ref options 'type #f))
+        (initiator (option-ref options 'initiator (getenv "USER"))))
+
+    (unless (and service version environment deployment-type)
+      (format #t "Error: Missing required arguments~%")
+      (format #t "Required: --service, --version, --environment, --type~%")
+      (exit 2))
+
+    (let* ((deployment (create-deployment
+                        service version environment deployment-type
+                        #:initiator initiator))
+           (result (with-sqlite-store db-path
+                    (lambda (store)
+                      (add-event! store deployment)))))
+
+      (format #t "Deployment recorded: ~a~%" (deployment-id deployment))
+      0)))
+
+(define (record-rollback-command options db-path)
+  (let ((service (option-ref options 'service #f))
+        (from-version (option-ref options 'from-version #f))
+        (to-version (option-ref options 'to-version #f))
+        (reason (option-ref options 'reason #f))
+        (deployment-id (option-ref options 'deployment-id #f)))
+
+    (unless (and service from-version to-version reason)
+      (format #t "Error: Missing required arguments~%")
+      (format #t "Required: --service, --from-version, --to-version, --reason~%")
+      (exit 2))
+
+    (let* ((rollback (create-rollback
+                      service from-version to-version reason
+                      #:deployment-id deployment-id))
+           (result (with-sqlite-store db-path
+                    (lambda (store)
+                      (add-event! store rollback)))))
+
+      (format #t "Rollback recorded: ~a~%" (rollback-id rollback))
+      0)))
+
+(define (list-deployments-command options db-path format-type)
+  (let ((service (option-ref options 'service #f))
+        (environment (option-ref options 'environment #f))
+        (status (option-ref options 'status #f))
+        (limit (string->number (or (option-ref options 'limit #f) "10")))
+        (since (option-ref options 'since #f)))
+
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((deployments (query-deployments store
+                                             #:service service
+                                             #:environment environment
+                                             #:status status
+                                             #:limit limit
+                                             #:since since)))
+          (output-deployments deployments format-type))))
+    0))
+
+(define (show-metrics-command options db-path format-type)
+  (let ((service (option-ref options 'service "all"))
+        (metric (option-ref options 'metric #f))
+        (period (string->number (or (option-ref options 'period #f) "30"))))
+
+    (unless metric
+      (format #t "Error: --metric required~%")
+      (format #t "Values: frequency, duration, success_rate, mttr, lead_time~%")
+      (exit 2))
+
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((metrics (calculate-metrics store service metric period)))
+          (output-metrics metrics format-type))))
+    0))
+
+(define (analyze-command options db-path format-type)
+  (let ((analysis-type (option-ref options 'type #f))
+        (period (string->number (or (option-ref options 'period #f) "90"))))
+
+    (unless analysis-type
+      (format #t "Error: --type required~%")
+      (format #t "Values: failure_patterns, peak_times, dependencies, risk~%")
+      (exit 2))
+
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((analysis (analyze-patterns store analysis-type period)))
+          (output-analysis analysis format-type))))
+    0))
+
+(define (health-check-command options db-path format-type)
+  (let ((service (option-ref options 'service "all")))
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((health (check-health store service)))
+          (output-health health format-type))))
+    0))
+
+(define (export-command options db-path)
+  (let ((format-type (option-ref options 'format #f))
+        (output-file (option-ref options 'output #f))
+        (service (option-ref options 'service #f)))
+
+    (unless format-type
+      (format #t "Error: --format required~%")
+      (format #t "Values: json, csv, markdown, org-mode~%")
+      (exit 2))
+
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((data (export-data store format-type
+                                #:service service)))
+          (if output-file
+              (call-with-output-file output-file
+                (lambda (port)
+                  (display data port)))
+              (display data)))))
+    0))
+
+(define (visualize-command options db-path)
+  (let ((viz-type (option-ref options 'type #f))
+        (format-type (option-ref options 'format #f))
+        (service (option-ref options 'service #f)))
+
+    (unless (and viz-type format-type)
+      (format #t "Error: --type and --format required~%")
+      (format #t "Visualization types: timeline, dependency_graph, heatmap, flow~%")
+      (format #t "Formats: mermaid, graphviz, ascii~%")
+      (exit 2))
+
+    (with-sqlite-store db-path
+      (lambda (store)
+        (let ((visualization (generate-visualization
+                              store viz-type format-type
+                              #:service service)))
+          (display visualization))))
+    0))
+
+(define (start-api-server options db-path)
+  (let ((port (string->number (or (getenv "DEPLOY_LEDGER_PORT") "8080"))))
+    (format #t "Starting API server on port ~a...~%" port)
+    (format #t "Database: ~a~%" db-path)
+    (format #t "Press Ctrl+C to stop~%")
+    (start-server port db-path)))
+
+(define (main args)
+  (let* ((parsed (getopt-long args option-spec #:stop-at-first-non-option #t))
+         (options parsed)
+         (help-wanted (option-ref options 'help #f))
+         (version-wanted (option-ref options 'version #f))
+         (remaining (option-ref options '() '())))
+
+    (cond
+     (version-wanted
+      (display-version)
+      0)
+
+     (help-wanted
+      (display-help)
+      0)
+
+     ((null? remaining)
+      (display-help)
+      1)
+
+     (else
+      (let ((command (car remaining))
+            (command-args (cdr remaining)))
+        (execute-command command options command-args))))))
+
+(exit (main (command-line)))

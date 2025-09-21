@@ -1,0 +1,500 @@
+.\" Man page for gdl (Guile Deploy Ledger)
+.\" Copyright (C) 2025 Daria Pascal (dsp-dr)
+.TH GDL 1 "January 2025" "Version 1.0.0" "Guile Deploy Ledger"
+
+.SH NAME
+gdl \- Event-sourced deployment tracking and change control system
+
+.SH SYNOPSIS
+.B gdl
+[\fIOPTION\fR]...
+\fICOMMAND\fR
+[\fIARGS\fR]...
+
+.SH DESCRIPTION
+.B gdl
+(Guile Deploy Ledger) is an event-sourced deployment tracking system that records,
+analyzes, and visualizes software deployments. It provides comprehensive change
+management with rollback capabilities, metrics analysis, and multi-service orchestration.
+
+.SH COMMANDS
+.TP
+.B record-deployment
+Record a new deployment event with service, version, environment, and deployment type.
+
+.TP
+.B record-rollback
+Record a rollback event when reverting to a previous version.
+
+.TP
+.B list-deployments
+List deployment events with optional filters for service, environment, and status.
+
+.TP
+.B get-deployment
+Get detailed information about a specific deployment by ID.
+
+.TP
+.B show-metrics
+Display deployment metrics including frequency, duration, success rate, MTTR, and lead time.
+
+.TP
+.B analyze
+Analyze deployment patterns to identify failure trends, peak times, and dependencies.
+
+.TP
+.B health
+Check deployment health and get improvement recommendations.
+
+.TP
+.B export
+Export deployment data in various formats (JSON, CSV, Markdown, Org-mode).
+
+.TP
+.B visualize
+Generate deployment visualizations as timelines, dependency graphs, or heatmaps.
+
+.TP
+.B server
+Start the API server for webhook integration and remote access.
+
+.SH GLOBAL OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Display help message and exit.
+
+.TP
+.BR \-v ", " \-\-version
+Display version information and exit.
+
+.TP
+.BR \-d ", " \-\-database " " \fIPATH\fR
+Path to SQLite database file.
+.br
+Default: ~/.deploy-ledger/deployments.db
+
+.TP
+.BR \-f ", " \-\-format " " \fIFORMAT\fR
+Output format for data display.
+.br
+Values: json, csv, markdown, org
+.br
+Default: json
+
+.TP
+.BR \-q ", " \-\-quiet
+Suppress non-essential output.
+
+.TP
+.B \-\-verbose
+Enable verbose output for debugging.
+
+.TP
+.B \-\-config " " \fIFILE\fR
+Load configuration from specified file.
+
+.SH DEPLOYMENT OPTIONS
+For
+.B record-deployment
+command:
+
+.TP
+.B \-\-service " " \fINAME\fR
+Name of the service being deployed (required).
+
+.TP
+.B \-\-version " " \fIVERSION\fR
+Version being deployed, e.g., v2.3.0 (required).
+
+.TP
+.B \-\-environment " " \fIENV\fR
+Target deployment environment (required).
+.br
+Values: development, staging, production
+
+.TP
+.B \-\-type " " \fITYPE\fR
+Deployment strategy (required).
+.br
+Values: blue-green, canary, rolling, big-bang
+
+.TP
+.B \-\-initiator " " \fINAME\fR
+Person or system initiating the deployment.
+.br
+Default: current user
+
+.TP
+.B \-\-change-id " " \fIID\fR
+Associated change request or ticket ID.
+
+.TP
+.B \-\-approved-by " " \fILIST\fR
+Comma-separated list of approvers.
+
+.TP
+.B \-\-region " " \fIREGION\fR
+Geographic region for deployment.
+
+.TP
+.B \-\-cluster " " \fICLUSTER\fR
+Target Kubernetes cluster or server group.
+
+.TP
+.B \-\-replicas " " \fICOUNT\fR
+Number of replicas to deploy.
+
+.SH ROLLBACK OPTIONS
+For
+.B record-rollback
+command:
+
+.TP
+.B \-\-service " " \fINAME\fR
+Service being rolled back (required).
+
+.TP
+.B \-\-from-version " " \fIVER\fR
+Version rolling back from (required).
+
+.TP
+.B \-\-to-version " " \fIVER\fR
+Version rolling back to (required).
+
+.TP
+.B \-\-reason " " \fIREASON\fR
+Reason for rollback (required).
+
+.TP
+.B \-\-deployment-id " " \fIID\fR
+ID of the deployment being rolled back.
+
+.SH QUERY OPTIONS
+For
+.B list-deployments
+command:
+
+.TP
+.B \-\-service " " \fINAME\fR
+Filter by service name.
+
+.TP
+.B \-\-environment " " \fIENV\fR
+Filter by environment.
+
+.TP
+.B \-\-status " " \fISTATUS\fR
+Filter by deployment status.
+.br
+Values: pending, in-progress, succeeded, failed, rolled-back
+
+.TP
+.B \-\-limit " " \fINUMBER\fR
+Maximum number of results.
+.br
+Default: 10
+
+.TP
+.B \-\-since " " \fIDATE\fR
+Show deployments since DATE (ISO 8601).
+
+.TP
+.B \-\-until " " \fIDATE\fR
+Show deployments until DATE (ISO 8601).
+
+.SH METRICS OPTIONS
+For
+.B show-metrics
+command:
+
+.TP
+.B \-\-service " " \fINAME\fR
+Service name or 'all' for all services.
+
+.TP
+.B \-\-metric " " \fITYPE\fR
+Type of metric to display (required).
+.br
+Values: frequency, duration, success_rate, mttr, lead_time
+
+.TP
+.B \-\-period " " \fIDAYS\fR
+Analysis period in days.
+.br
+Default: 30
+
+.TP
+.B \-\-group-by " " \fIFIELD\fR
+Group results by time period.
+.br
+Values: day, week, month
+
+.SH ANALYSIS OPTIONS
+For
+.B analyze
+command:
+
+.TP
+.B \-\-type " " \fIANALYSIS\fR
+Type of analysis to perform (required).
+.br
+Values: failure_patterns, peak_times, dependencies, risk
+
+.TP
+.B \-\-period " " \fIDAYS\fR
+Analysis period in days.
+.br
+Default: 90
+
+.TP
+.B \-\-threshold " " \fIVALUE\fR
+Custom threshold for analysis algorithms.
+
+.SH VISUALIZATION OPTIONS
+For
+.B visualize
+command:
+
+.TP
+.B \-\-type " " \fIVISUAL\fR
+Type of visualization (required).
+.br
+Values: timeline, dependency_graph, heatmap, flow
+
+.TP
+.B \-\-format " " \fIFORMAT\fR
+Output format (required).
+.br
+Values: mermaid, graphviz, ascii
+
+.TP
+.B \-\-service " " \fINAME\fR
+Focus visualization on specific service.
+
+.TP
+.B \-\-width " " \fIWIDTH\fR
+Output width for ASCII visualizations.
+
+.TP
+.B \-\-height " " \fIHEIGHT\fR
+Output height for ASCII visualizations.
+
+.SH ENVIRONMENT
+.TP
+.B DEPLOY_LEDGER_DB
+Default database path if not specified with --database.
+
+.TP
+.B DEPLOY_LEDGER_CONFIG
+Default configuration file path.
+
+.TP
+.B DEPLOY_LEDGER_FORMAT
+Default output format if not specified with --format.
+
+.TP
+.B DEPLOY_LEDGER_WEBHOOK
+Webhook URL for deployment notifications.
+
+.TP
+.B DEPLOY_LEDGER_API_KEY
+API key for external service integrations.
+
+.TP
+.B DEPLOY_LEDGER_PORT
+Port for API server (default: 8080).
+
+.TP
+.B GITHUB_WEBHOOK_SECRET
+Secret for verifying GitHub webhook signatures.
+
+.SH EXAMPLES
+Record a production deployment:
+.PP
+.nf
+.RS
+gdl record-deployment --service api-gateway \\
+    --version v2.3.0 --environment production \\
+    --type canary --initiator "CI/CD Pipeline"
+.RE
+.fi
+
+List recent production deployments:
+.PP
+.nf
+.RS
+gdl list-deployments --environment production \\
+    --limit 20 --format json
+.RE
+.fi
+
+Check deployment metrics:
+.PP
+.nf
+.RS
+gdl show-metrics --service api-gateway \\
+    --metric success_rate --period 7
+.RE
+.fi
+
+Record a rollback:
+.PP
+.nf
+.RS
+gdl record-rollback --service api-gateway \\
+    --from-version v2.3.0 --to-version v2.2.9 \\
+    --reason "Memory leak in connection pooling"
+.RE
+.fi
+
+Analyze failure patterns:
+.PP
+.nf
+.RS
+gdl analyze --type failure_patterns --period 30
+.RE
+.fi
+
+Export deployment history:
+.PP
+.nf
+.RS
+gdl export --format csv --output deployments.csv \\
+    --date-from 2025-01-01
+.RE
+.fi
+
+Generate dependency graph:
+.PP
+.nf
+.RS
+gdl visualize --type dependency_graph \\
+    --format mermaid > dependencies.mmd
+.RE
+.fi
+
+Start API server:
+.PP
+.nf
+.RS
+gdl server
+.RE
+.fi
+
+.SH CONFIGURATION FILE
+Configuration can be provided in Scheme format at ~/.deploy-ledger/config.scm:
+
+.PP
+.nf
+.RS
+((database . "/var/lib/deploy-ledger/deployments.db")
+ (default-format . "json")
+ (webhook-url . "https://hooks.example.com/deploy")
+ (retention-days . 90)
+ (auto-rollback . #t)
+ (metrics-port . 9090))
+.RE
+.fi
+
+.SH INTEGRATIONS
+.B gdl
+integrates with various CI/CD and monitoring systems:
+
+.TP
+.B GitHub Actions
+Use GitHub webhooks to automatically record deployments from workflow runs.
+
+.TP
+.B GitLab CI
+Integrate with GitLab pipelines using webhook triggers.
+
+.TP
+.B Jenkins
+Use the gdl CLI in Jenkins pipeline scripts.
+
+.TP
+.B Kubernetes
+Track Kubernetes deployments using admission webhooks.
+
+.TP
+.B Prometheus
+Export metrics in Prometheus format for monitoring.
+
+.TP
+.B Claude Desktop
+Use the MCP server for AI-assisted deployment analysis.
+
+.SH FILES
+.TP
+.I ~/.deploy-ledger/deployments.db
+Default SQLite database for deployment records.
+
+.TP
+.I ~/.deploy-ledger/config.scm
+User configuration file in Scheme format.
+
+.TP
+.I /usr/local/share/deploy-ledger/
+System-wide configuration and schema files.
+
+.TP
+.I /var/log/deploy-ledger/
+Log files when running as a server.
+
+.SH EXIT STATUS
+.TP
+.B 0
+Success - operation completed without errors.
+
+.TP
+.B 1
+General error - unspecified failure.
+
+.TP
+.B 2
+Invalid arguments - missing or incorrect parameters.
+
+.TP
+.B 3
+Database error - failed to read or write database.
+
+.TP
+.B 4
+Network error - failed to connect to remote services.
+
+.TP
+.B 5
+Permission denied - insufficient privileges.
+
+.SH DIAGNOSTICS
+Enable verbose output with
+.B --verbose
+to see detailed operation logs.
+
+Check the system log for server-mode errors:
+.PP
+.nf
+.RS
+journalctl -u deploy-ledger
+.RE
+.fi
+
+.SH BUGS
+Report bugs at: https://github.com/dsp-dr/guile-deploy-ledger/issues
+
+.SH SEE ALSO
+.BR git (1),
+.BR sqlite3 (1),
+.BR guile (1),
+.BR mermaid-cli (1)
+
+.SH AUTHOR
+Written by Daria Pascal (dsp-dr).
+
+.SH COPYRIGHT
+Copyright \(co 2025 Daria Pascal (dsp-dr).
+.PP
+This is free software; see the source for copying conditions.
+There is NO warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+.PP
+Licensed under the GNU General Public License version 3 or later.

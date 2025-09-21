@@ -1,0 +1,53 @@
+#!/usr/bin/env guile
+!#
+;;; gdl - Guile Deploy Ledger (Simple CLI)
+;;; Copyright (C) 2025 Daria Pascal (dsp-dr)
+;;; Licensed under GPLv3+
+
+(use-modules (ice-9 getopt-long)
+             (ice-9 format)
+             (ice-9 rdelim)
+             (ice-9 textual-ports))
+
+(define (read-version-file)
+  (call-with-input-file "VERSION"
+    (lambda (port)
+      (string-trim-both (get-line port)))))
+
+(define version (read-version-file))
+
+(define option-spec
+  '((help      (single-char #\h) (value #f))
+    (version   (single-char #\v) (value #f))))
+
+(define (display-version)
+  (format #t "guile-deploy-ledger ~a~%" version)
+  (format #t "Event-sourced deployment tracking system~%")
+  (format #t "Copyright (C) 2025 Daria Pascal (dsp-dr)~%")
+  (format #t "License GPLv3+: GNU GPL version 3 or later~%"))
+
+(define (display-help)
+  (format #t "Usage: gdl [OPTION]... COMMAND [ARGS]...~%~%")
+  (format #t "Event-sourced deployment tracking and change control system~%~%")
+  (format #t "Run 'man gdl' for full documentation~%"))
+
+(define (main args)
+  (let* ((parsed (getopt-long args option-spec #:stop-at-first-non-option #t))
+         (options parsed)
+         (help-wanted (option-ref options 'help #f))
+         (version-wanted (option-ref options 'version #f)))
+
+    (cond
+     (version-wanted
+      (display-version)
+      0)
+
+     (help-wanted
+      (display-help)
+      0)
+
+     (else
+      (display-help)
+      0))))
+
+(exit (main (command-line)))
