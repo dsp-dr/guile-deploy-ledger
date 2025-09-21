@@ -97,7 +97,7 @@
 (define (generate-id)
   "Generate a unique ID for events"
   (string-append "deploy-"
-                 (number->string (current-time))
+                 (number->string (time-second (current-time time-utc)))
                  "-"
                  (number->string (random 999999))))
 

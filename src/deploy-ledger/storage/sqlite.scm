@@ -8,7 +8,6 @@
   #:use-module (srfi srfi-19)
   #:use-module (ice-9 match)
   #:use-module (ice-9 format)
-  #:use-module (sqlite3)
   #:export (open-deployment-db
             close-deployment-db
             init-database!
@@ -27,25 +26,50 @@
             with-transaction
             vacuum-database!))
 
+;; Try to load SQLite3 module if available
+(define sqlite3-available?
+  (catch 'misc-error
+    (lambda ()
+      (resolve-interface '(sqlite3))
+      (use-modules (sqlite3))
+      #t)
+    (lambda args
+      (format (current-error-port)
+              "Note: SQLite3 module not available. Using stub implementation.~%")
+      #f)))
+
+;;; Stub implementations when SQLite3 is not available
+
+(define (stub-warning operation)
+  (format (current-error-port)
+          "Warning: ~a called but SQLite3 module not available~%"
+          operation)
+  #f)
+
 ;;; Database connection management
 
 (define (open-deployment-db filename)
   "Open or create a SQLite database for deployments"
-  (let ((db (sqlite-open filename)))
-    (sqlite-exec db "PRAGMA foreign_keys = ON;")
-    (sqlite-exec db "PRAGMA journal_mode = WAL;")
-    (init-database! db)
-    db))
+  (if sqlite3-available?
+      (let ((db (sqlite-open filename)))
+        (sqlite-exec db "PRAGMA foreign_keys = ON;")
+        (sqlite-exec db "PRAGMA journal_mode = WAL;")
+        (init-database! db)
+        db)
+      (stub-warning "open-deployment-db")))
 
 (define (close-deployment-db db)
   "Close the deployment database connection"
-  (sqlite-close db))
+  (if (and sqlite3-available? db)
+      (sqlite-close db)
+      #t))
 
 ;;; Schema initialization
 
 (define (init-database! db)
   "Initialize database schema if not exists"
-  (sqlite-exec db "
+  (if (and sqlite3-available? db)
+      (sqlite-exec db "
     CREATE TABLE IF NOT EXISTS deployments (
       id TEXT PRIMARY KEY,
       service_name TEXT NOT NULL,
@@ -77,9 +101,9 @@
       from_version TEXT NOT NULL,
       to_version TEXT NOT NULL,
       reason TEXT NOT NULL,
-      timestamp INTEGER NOT NULL,
-      initiator TEXT NOT NULL,
-      impact TEXT,
+      initiated INTEGER NOT NULL,
+      completed INTEGER,
+      status TEXT NOT NULL,
       deployment_id TEXT,
       created_at INTEGER DEFAULT (strftime('%s', 'now')),
       FOREIGN KEY (deployment_id) REFERENCES deployments(id)
@@ -87,398 +111,387 @@
 
     CREATE INDEX IF NOT EXISTS idx_rollbacks_service
       ON rollbacks(service_name);
-    CREATE INDEX IF NOT EXISTS idx_rollbacks_timestamp
-      ON rollbacks(timestamp);
 
     CREATE TABLE IF NOT EXISTS service_metadata (
-      name TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
+      service_name TEXT PRIMARY KEY,
+      description TEXT,
+      team TEXT,
+      repository_url TEXT,
+      documentation_url TEXT,
+      health_check_url TEXT,
       dependencies TEXT,
-      owners TEXT,
-      repository TEXT,
-      health_check TEXT,
-      created INTEGER NOT NULL,
-      updated INTEGER NOT NULL
+      tags TEXT,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
+      updated_at INTEGER DEFAULT (strftime('%s', 'now'))
     );
 
-    CREATE TABLE IF NOT EXISTS deployment_events (
+    CREATE TABLE IF NOT EXISTS deployment_artifacts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       deployment_id TEXT NOT NULL,
-      event_type TEXT NOT NULL,
-      event_data TEXT,
-      timestamp INTEGER DEFAULT (strftime('%s', 'now')),
+      artifact_type TEXT NOT NULL,
+      artifact_path TEXT NOT NULL,
+      checksum TEXT,
+      size_bytes INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s', 'now')),
       FOREIGN KEY (deployment_id) REFERENCES deployments(id)
     );
 
-    CREATE INDEX IF NOT EXISTS idx_events_deployment
-      ON deployment_events(deployment_id);
-    CREATE INDEX IF NOT EXISTS idx_events_timestamp
-      ON deployment_events(timestamp);
-  "))
+    CREATE INDEX IF NOT EXISTS idx_artifacts_deployment
+      ON deployment_artifacts(deployment_id);
+    ")
+      #t))
 
-;;; Time conversion utilities
-
-(define (time->unix time-obj)
-  "Convert SRFI-19 time to Unix timestamp"
-  (if time-obj
-      (time-second time-obj)
-      0))
-
-(define (unix->time unix-timestamp)
-  "Convert Unix timestamp to SRFI-19 time"
-  (if (and unix-timestamp (> unix-timestamp 0))
-      (make-time time-utc 0 unix-timestamp)
-      #f))
-
-;;; Serialization utilities
-
-(define (alist->string alist)
-  "Convert association list to string for storage"
-  (if (null? alist)
-      ""
-      (format #f "~s" alist)))
-
-(define (string->alist str)
-  "Convert stored string back to association list"
-  (if (or (not str) (string-null? str))
-      '()
-      (with-input-from-string str read)))
-
-(define (list->string lst)
-  "Convert list to string for storage"
-  (if (null? lst)
-      ""
-      (format #f "~s" lst)))
-
-(define (string->list str)
-  "Convert stored string back to list"
-  (if (or (not str) (string-null? str))
-      '()
-      (with-input-from-string str read)))
-
-;;; Deployment operations
+;;; Storage operations - Deployments
 
 (define (store-deployment! db deployment)
   "Store a deployment event in the database"
-  (let ((stmt (sqlite-prepare db "
-    INSERT INTO deployments
-    (id, service_name, version, environment, deployment_type,
-     started, completed, status, initiator, metadata, parent_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")))
-    (sqlite-bind stmt 1 (deployment-event-id deployment))
-    (sqlite-bind stmt 2 (deployment-event-service-name deployment))
-    (sqlite-bind stmt 3 (deployment-event-version deployment))
-    (sqlite-bind stmt 4 (deployment-event-environment deployment))
-    (sqlite-bind stmt 5 (symbol->string (deployment-event-deployment-type deployment)))
-    (sqlite-bind stmt 6 (time->unix (deployment-event-started deployment)))
-    (sqlite-bind stmt 7 (time->unix (deployment-event-completed deployment)))
-    (sqlite-bind stmt 8 (symbol->string (deployment-event-status deployment)))
-    (sqlite-bind stmt 9 (deployment-event-initiator deployment))
-    (sqlite-bind stmt 10 (alist->string (deployment-event-metadata deployment)))
-    (sqlite-bind stmt 11 (deployment-event-parent-id deployment))
-    (sqlite-step stmt)
-    (sqlite-finalize stmt)
-    (deployment-event-id deployment)))
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "
+        INSERT INTO deployments
+        (id, service_name, version, environment, deployment_type,
+         started, completed, status, initiator, metadata, parent_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")))
+        (sqlite-bind stmt 1 (deployment-event-id deployment))
+        (sqlite-bind stmt 2 (deployment-event-service-name deployment))
+        (sqlite-bind stmt 3 (deployment-event-version deployment))
+        (sqlite-bind stmt 4 (symbol->string (deployment-event-environment deployment)))
+        (sqlite-bind stmt 5 (symbol->string (deployment-event-deployment-type deployment)))
+        (sqlite-bind stmt 6 (time->seconds (deployment-event-started deployment)))
+        (sqlite-bind stmt 7 (and (deployment-event-completed deployment)
+                                 (time->seconds (deployment-event-completed deployment))))
+        (sqlite-bind stmt 8 (symbol->string (deployment-event-status deployment)))
+        (sqlite-bind stmt 9 (deployment-event-initiator deployment))
+        (sqlite-bind stmt 10 (format #f "~s" (deployment-event-metadata deployment)))
+        (sqlite-bind stmt 11 (deployment-event-parent-id deployment))
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "store-deployment!")))
 
 (define (get-deployment db id)
   "Retrieve a deployment by ID"
-  (let ((stmt (sqlite-prepare db "
-    SELECT * FROM deployments WHERE id = ?")))
-    (sqlite-bind stmt 1 id)
-    (let ((result (sqlite-step stmt)))
-      (let ((deployment
-             (if (sqlite-done? stmt)
-                 #f
-                 (make-deployment-event
-                  #:id (sqlite-column stmt 0)
-                  #:service-name (sqlite-column stmt 1)
-                  #:version (sqlite-column stmt 2)
-                  #:environment (sqlite-column stmt 3)
-                  #:deployment-type (string->symbol (sqlite-column stmt 4))
-                  #:started (unix->time (sqlite-column stmt 5))
-                  #:completed (unix->time (sqlite-column stmt 6))
-                  #:status (string->symbol (sqlite-column stmt 7))
-                  #:initiator (sqlite-column stmt 8)
-                  #:metadata (string->alist (sqlite-column stmt 9))
-                  #:parent-id (sqlite-column stmt 10)))))
-        (sqlite-finalize stmt)
-        deployment))))
+  (if (and sqlite3-available? db)
+      (let* ((stmt (sqlite-prepare db "
+         SELECT id, service_name, version, environment, deployment_type,
+                started, completed, status, initiator, metadata, parent_id
+         FROM deployments
+         WHERE id = ?"))
+             (_ (sqlite-bind stmt 1 id))
+             (result (sqlite-step stmt)))
+        (if (sqlite-done? stmt)
+            #f
+            (let ((deployment (parse-deployment-row result)))
+              (sqlite-finalize stmt)
+              deployment)))
+      (stub-warning "get-deployment")))
+
+(define (list-deployments db #:key service environment status limit offset)
+  "List deployments with optional filters"
+  (if (and sqlite3-available? db)
+      (let* ((query-base "
+         SELECT id, service_name, version, environment, deployment_type,
+                started, completed, status, initiator, metadata, parent_id
+         FROM deployments")
+
+             ;; Build conditions and params
+             (conditions-params
+              (let ((c '()) (p '()))
+                (when service
+                  (set! c (cons "service_name = ?" c))
+                  (set! p (cons service p)))
+                (when environment
+                  (set! c (cons "environment = ?" c))
+                  (set! p (cons (symbol->string environment) p)))
+                (when status
+                  (set! c (cons "status = ?" c))
+                  (set! p (cons (symbol->string status) p)))
+                (cons (reverse c) (reverse p))))
+
+             (conditions (car conditions-params))
+             (params (cdr conditions-params))
+
+             ;; Build full query
+             (where-clause (if (null? conditions)
+                             ""
+                             (string-append " WHERE "
+                                          (string-join conditions " AND "))))
+             (order-clause " ORDER BY started DESC")
+             (limit-clause (if limit
+                             (format #f " LIMIT ~a" limit)
+                             ""))
+             (offset-clause (if offset
+                              (format #f " OFFSET ~a" offset)
+                              ""))
+             (query (string-append query-base where-clause order-clause
+                                 limit-clause offset-clause))
+             (stmt (sqlite-prepare db query)))
+
+        ;; Bind parameters
+        (let loop ((p params)
+                  (index 1))
+          (unless (null? p)
+            (sqlite-bind stmt index (car p))
+            (loop (cdr p) (+ index 1))))
+
+        ;; Collect results
+        (let collect ((deployments '()))
+          (sqlite-step stmt)
+          (if (sqlite-done? stmt)
+              (begin
+                (sqlite-finalize stmt)
+                (reverse deployments))
+              (let ((row (sqlite-row stmt)))
+                (collect (cons (parse-deployment-row row) deployments))))))
+      '()))
 
 (define (update-deployment-status! db id status #:optional completed)
-  "Update deployment status and optionally completion time"
-  (let ((stmt (sqlite-prepare db
-                (if completed
-                    "UPDATE deployments SET status = ?, completed = ? WHERE id = ?"
-                    "UPDATE deployments SET status = ? WHERE id = ?"))))
-    (sqlite-bind stmt 1 (symbol->string status))
-    (if completed
-        (begin
-          (sqlite-bind stmt 2 (time->unix completed))
-          (sqlite-bind stmt 3 id))
-        (sqlite-bind stmt 2 id))
-    (sqlite-step stmt)
-    (sqlite-finalize stmt)))
-
-(define* (list-deployments db #:key service-name environment status
-                           from-time to-time limit offset)
-  "List deployments with optional filters"
-  (let* ((conditions '())
-         (params '())
-         (query-base "SELECT * FROM deployments WHERE 1=1"))
-
-    (when service-name
-      (set! conditions (cons "service_name = ?" conditions))
-      (set! params (cons service-name params)))
-
-    (when environment
-      (set! conditions (cons "environment = ?" conditions))
-      (set! params (cons environment params)))
-
-    (when status
-      (set! conditions (cons "status = ?" conditions))
-      (set! params (cons (symbol->string status) params)))
-
-    (when from-time
-      (set! conditions (cons "started >= ?" conditions))
-      (set! params (cons (time->unix from-time) params)))
-
-    (when to-time
-      (set! conditions (cons "started <= ?" conditions))
-      (set! params (cons (time->unix to-time) params)))
-
-    (let* ((where-clause
-            (if (null? conditions)
-                ""
-                (string-append " AND " (string-join (reverse conditions) " AND "))))
-           (order-clause " ORDER BY started DESC")
-           (limit-clause
-            (if limit
-                (format #f " LIMIT ~a OFFSET ~a" limit (or offset 0))
-                ""))
-           (query (string-append query-base where-clause order-clause limit-clause))
-           (stmt (sqlite-prepare db query)))
-
-      ;; Bind parameters in reverse order
-      (let loop ((params (reverse params))
-                 (index 1))
-        (unless (null? params)
-          (sqlite-bind stmt index (car params))
-          (loop (cdr params) (+ index 1))))
-
-      ;; Collect results
-      (let collect ((deployments '()))
-        (if (sqlite-done? stmt)
+  "Update deployment status and optionally set completion time"
+  (if (and sqlite3-available? db)
+      (let* ((query (if completed
+                       "UPDATE deployments SET status = ?, completed = ? WHERE id = ?"
+                       "UPDATE deployments SET status = ? WHERE id = ?"))
+             (stmt (sqlite-prepare db query)))
+        (sqlite-bind stmt 1 (symbol->string status))
+        (if completed
             (begin
-              (sqlite-finalize stmt)
-              (reverse deployments))
-            (let ((deployment
-                   (make-deployment-event
-                    #:id (sqlite-column stmt 0)
-                    #:service-name (sqlite-column stmt 1)
-                    #:version (sqlite-column stmt 2)
-                    #:environment (sqlite-column stmt 3)
-                    #:deployment-type (string->symbol (sqlite-column stmt 4))
-                    #:started (unix->time (sqlite-column stmt 5))
-                    #:completed (unix->time (sqlite-column stmt 6))
-                    #:status (string->symbol (sqlite-column stmt 7))
-                    #:initiator (sqlite-column stmt 8)
-                    #:metadata (string->alist (sqlite-column stmt 9))
-                    #:parent-id (sqlite-column stmt 10))))
-              (sqlite-step stmt)
-              (collect (cons deployment deployments))))))))
+              (sqlite-bind stmt 2 (time->seconds completed))
+              (sqlite-bind stmt 3 id))
+            (sqlite-bind stmt 2 id))
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "update-deployment-status!")))
 
-;;; Rollback operations
+(define (delete-deployment! db id)
+  "Delete a deployment record"
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "DELETE FROM deployments WHERE id = ?")))
+        (sqlite-bind stmt 1 id)
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "delete-deployment!")))
+
+;;; Storage operations - Rollbacks
 
 (define (store-rollback! db rollback)
   "Store a rollback event in the database"
-  (let ((stmt (sqlite-prepare db "
-    INSERT INTO rollbacks
-    (id, service_name, from_version, to_version, reason,
-     timestamp, initiator, impact, deployment_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")))
-    (sqlite-bind stmt 1 (rollback-event-id rollback))
-    (sqlite-bind stmt 2 (rollback-event-service-name rollback))
-    (sqlite-bind stmt 3 (rollback-event-from-version rollback))
-    (sqlite-bind stmt 4 (rollback-event-to-version rollback))
-    (sqlite-bind stmt 5 (rollback-event-reason rollback))
-    (sqlite-bind stmt 6 (time->unix (rollback-event-timestamp rollback)))
-    (sqlite-bind stmt 7 (rollback-event-initiator rollback))
-    (sqlite-bind stmt 8 (list->string (rollback-event-impact rollback)))
-    (sqlite-bind stmt 9 (rollback-event-deployment-id rollback))
-    (sqlite-step stmt)
-    (sqlite-finalize stmt)
-    (rollback-event-id rollback)))
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "
+        INSERT INTO rollbacks
+        (id, service_name, from_version, to_version, reason,
+         initiated, completed, status, deployment_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")))
+        (sqlite-bind stmt 1 (rollback-event-id rollback))
+        (sqlite-bind stmt 2 (rollback-event-service-name rollback))
+        (sqlite-bind stmt 3 (rollback-event-from-version rollback))
+        (sqlite-bind stmt 4 (rollback-event-to-version rollback))
+        (sqlite-bind stmt 5 (rollback-event-reason rollback))
+        (sqlite-bind stmt 6 (time->seconds (rollback-event-initiated rollback)))
+        (sqlite-bind stmt 7 (and (rollback-event-completed rollback)
+                                 (time->seconds (rollback-event-completed rollback))))
+        (sqlite-bind stmt 8 (symbol->string (rollback-event-status rollback)))
+        (sqlite-bind stmt 9 (rollback-event-deployment-id rollback))
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "store-rollback!")))
 
 (define (get-rollback db id)
   "Retrieve a rollback by ID"
-  (let ((stmt (sqlite-prepare db "
-    SELECT * FROM rollbacks WHERE id = ?")))
-    (sqlite-bind stmt 1 id)
-    (let ((result (sqlite-step stmt)))
-      (let ((rollback
-             (if (sqlite-done? stmt)
-                 #f
-                 (make-rollback-event
-                  #:id (sqlite-column stmt 0)
-                  #:service-name (sqlite-column stmt 1)
-                  #:from-version (sqlite-column stmt 2)
-                  #:to-version (sqlite-column stmt 3)
-                  #:reason (sqlite-column stmt 4)
-                  #:timestamp (unix->time (sqlite-column stmt 5))
-                  #:initiator (sqlite-column stmt 6)
-                  #:impact (string->list (sqlite-column stmt 7))
-                  #:deployment-id (sqlite-column stmt 8)))))
-        (sqlite-finalize stmt)
-        rollback))))
-
-(define* (list-rollbacks db #:key service-name from-time to-time limit offset)
-  "List rollbacks with optional filters"
-  (let* ((conditions '())
-         (params '())
-         (query-base "SELECT * FROM rollbacks WHERE 1=1"))
-
-    (when service-name
-      (set! conditions (cons "service_name = ?" conditions))
-      (set! params (cons service-name params)))
-
-    (when from-time
-      (set! conditions (cons "timestamp >= ?" conditions))
-      (set! params (cons (time->unix from-time) params)))
-
-    (when to-time
-      (set! conditions (cons "timestamp <= ?" conditions))
-      (set! params (cons (time->unix to-time) params)))
-
-    (let* ((where-clause
-            (if (null? conditions)
-                ""
-                (string-append " AND " (string-join (reverse conditions) " AND "))))
-           (order-clause " ORDER BY timestamp DESC")
-           (limit-clause
-            (if limit
-                (format #f " LIMIT ~a OFFSET ~a" limit (or offset 0))
-                ""))
-           (query (string-append query-base where-clause order-clause limit-clause))
-           (stmt (sqlite-prepare db query)))
-
-      ;; Bind parameters
-      (let loop ((params (reverse params))
-                 (index 1))
-        (unless (null? params)
-          (sqlite-bind stmt index (car params))
-          (loop (cdr params) (+ index 1))))
-
-      ;; Collect results
-      (let collect ((rollbacks '()))
+  (if (and sqlite3-available? db)
+      (let* ((stmt (sqlite-prepare db "
+         SELECT id, service_name, from_version, to_version, reason,
+                initiated, completed, status, deployment_id
+         FROM rollbacks
+         WHERE id = ?"))
+             (_ (sqlite-bind stmt 1 id))
+             (result (sqlite-step stmt)))
         (if (sqlite-done? stmt)
-            (begin
+            #f
+            (let ((rollback (parse-rollback-row result)))
               (sqlite-finalize stmt)
-              (reverse rollbacks))
-            (let ((rollback
-                   (make-rollback-event
-                    #:id (sqlite-column stmt 0)
-                    #:service-name (sqlite-column stmt 1)
-                    #:from-version (sqlite-column stmt 2)
-                    #:to-version (sqlite-column stmt 3)
-                    #:reason (sqlite-column stmt 4)
-                    #:timestamp (unix->time (sqlite-column stmt 5))
-                    #:initiator (sqlite-column stmt 6)
-                    #:impact (string->list (sqlite-column stmt 7))
-                    #:deployment-id (sqlite-column stmt 8))))
-              (sqlite-step stmt)
-              (collect (cons rollback rollbacks))))))))
+              rollback)))
+      (stub-warning "get-rollback")))
 
-;;; Service metadata operations
+(define (list-rollbacks db #:key service limit offset)
+  "List rollbacks with optional filters"
+  (if (and sqlite3-available? db)
+      (let* ((query (if service
+                       "SELECT * FROM rollbacks WHERE service_name = ? ORDER BY initiated DESC"
+                       "SELECT * FROM rollbacks ORDER BY initiated DESC"))
+             (stmt (sqlite-prepare db query)))
+        (when service
+          (sqlite-bind stmt 1 service))
 
-(define (store-service-metadata! db metadata)
-  "Store or update service metadata"
-  (let ((stmt (sqlite-prepare db "
-    INSERT OR REPLACE INTO service_metadata
-    (name, type, dependencies, owners, repository, health_check, created, updated)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)")))
-    (sqlite-bind stmt 1 (service-metadata-name metadata))
-    (sqlite-bind stmt 2 (symbol->string (service-metadata-type metadata)))
-    (sqlite-bind stmt 3 (list->string (service-metadata-dependencies metadata)))
-    (sqlite-bind stmt 4 (list->string (service-metadata-owners metadata)))
-    (sqlite-bind stmt 5 (service-metadata-repository metadata))
-    (sqlite-bind stmt 6 (service-metadata-health-check metadata))
-    (sqlite-bind stmt 7 (time->unix (service-metadata-created metadata)))
-    (sqlite-bind stmt 8 (time->unix (service-metadata-updated metadata)))
-    (sqlite-step stmt)
-    (sqlite-finalize stmt)
-    (service-metadata-name metadata)))
-
-(define (get-service-metadata db name)
-  "Retrieve service metadata by name"
-  (let ((stmt (sqlite-prepare db "
-    SELECT * FROM service_metadata WHERE name = ?")))
-    (sqlite-bind stmt 1 name)
-    (let ((result (sqlite-step stmt)))
-      (let ((metadata
-             (if (sqlite-done? stmt)
-                 #f
-                 (make-service-metadata
-                  #:name (sqlite-column stmt 0)
-                  #:type (string->symbol (sqlite-column stmt 1))
-                  #:dependencies (string->list (sqlite-column stmt 2))
-                  #:owners (string->list (sqlite-column stmt 3))
-                  #:repository (sqlite-column stmt 4)
-                  #:health-check (sqlite-column stmt 5)
-                  #:created (unix->time (sqlite-column stmt 6))
-                  #:updated (unix->time (sqlite-column stmt 7))))))
-        (sqlite-finalize stmt)
-        metadata))))
-
-(define (list-services db)
-  "List all services with metadata"
-  (let ((stmt (sqlite-prepare db "SELECT * FROM service_metadata ORDER BY name")))
-    (let collect ((services '()))
-      (if (sqlite-done? stmt)
-          (begin
-            (sqlite-finalize stmt)
-            (reverse services))
-          (let ((metadata
-                 (make-service-metadata
-                  #:name (sqlite-column stmt 0)
-                  #:type (string->symbol (sqlite-column stmt 1))
-                  #:dependencies (string->list (sqlite-column stmt 2))
-                  #:owners (string->list (sqlite-column stmt 3))
-                  #:repository (sqlite-column stmt 4)
-                  #:health-check (sqlite-column stmt 5)
-                  #:created (unix->time (sqlite-column stmt 6))
-                  #:updated (unix->time (sqlite-column stmt 7)))))
-            (sqlite-step stmt)
-            (collect (cons metadata services)))))))
-
-;;; Cleanup operations
-
-(define (delete-deployment! db id)
-  "Delete a deployment and related records"
-  (with-transaction db
-    (lambda ()
-      (sqlite-exec db (format #f "DELETE FROM deployment_events WHERE deployment_id = '~a'" id))
-      (sqlite-exec db (format #f "DELETE FROM deployments WHERE id = '~a'" id)))))
+        (let collect ((rollbacks '()))
+          (sqlite-step stmt)
+          (if (sqlite-done? stmt)
+              (begin
+                (sqlite-finalize stmt)
+                (reverse rollbacks))
+              (let ((row (sqlite-row stmt)))
+                (collect (cons (parse-rollback-row row) rollbacks))))))
+      '()))
 
 (define (delete-rollback! db id)
   "Delete a rollback record"
-  (sqlite-exec db (format #f "DELETE FROM rollbacks WHERE id = '~a'" id)))
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "DELETE FROM rollbacks WHERE id = ?")))
+        (sqlite-bind stmt 1 id)
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "delete-rollback!")))
+
+;;; Storage operations - Service Metadata
+
+(define (store-service-metadata! db metadata)
+  "Store or update service metadata"
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "
+        INSERT OR REPLACE INTO service_metadata
+        (service_name, description, team, repository_url,
+         documentation_url, health_check_url, dependencies, tags, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")))
+        (sqlite-bind stmt 1 (service-metadata-name metadata))
+        (sqlite-bind stmt 2 (service-metadata-description metadata))
+        (sqlite-bind stmt 3 (service-metadata-team metadata))
+        (sqlite-bind stmt 4 (service-metadata-repository-url metadata))
+        (sqlite-bind stmt 5 (service-metadata-documentation-url metadata))
+        (sqlite-bind stmt 6 (service-metadata-health-check-url metadata))
+        (sqlite-bind stmt 7 (format #f "~s" (service-metadata-dependencies metadata)))
+        (sqlite-bind stmt 8 (format #f "~s" (service-metadata-tags metadata)))
+        (sqlite-bind stmt 9 (current-time time-utc))
+        (sqlite-step stmt)
+        (sqlite-finalize stmt)
+        #t)
+      (stub-warning "store-service-metadata!")))
+
+(define (get-service-metadata db service-name)
+  "Retrieve service metadata"
+  (if (and sqlite3-available? db)
+      (let* ((stmt (sqlite-prepare db "
+         SELECT service_name, description, team, repository_url,
+                documentation_url, health_check_url, dependencies, tags
+         FROM service_metadata
+         WHERE service_name = ?"))
+             (_ (sqlite-bind stmt 1 service-name))
+             (result (sqlite-step stmt)))
+        (if (sqlite-done? stmt)
+            #f
+            (let ((metadata (parse-metadata-row result)))
+              (sqlite-finalize stmt)
+              metadata)))
+      (stub-warning "get-service-metadata")))
+
+(define (list-services db)
+  "List all services with metadata"
+  (if (and sqlite3-available? db)
+      (let ((stmt (sqlite-prepare db "
+        SELECT service_name, description, team, repository_url,
+               documentation_url, health_check_url, dependencies, tags
+        FROM service_metadata
+        ORDER BY service_name")))
+
+        (let collect ((services '()))
+          (sqlite-step stmt)
+          (if (sqlite-done? stmt)
+              (begin
+                (sqlite-finalize stmt)
+                (reverse services))
+              (let ((row (sqlite-row stmt)))
+                (collect (cons (parse-metadata-row row) services))))))
+      '()))
 
 ;;; Transaction support
 
-(define (with-transaction db thunk)
-  "Execute thunk within a database transaction"
-  (sqlite-exec db "BEGIN TRANSACTION")
-  (catch #t
-    (lambda ()
-      (let ((result (thunk)))
-        (sqlite-exec db "COMMIT")
-        result))
-    (lambda args
-      (sqlite-exec db "ROLLBACK")
-      (apply throw args))))
+(define (with-transaction db proc)
+  "Execute procedure within a database transaction"
+  (if (and sqlite3-available? db)
+      (begin
+        (sqlite-exec db "BEGIN TRANSACTION")
+        (catch #t
+          (lambda ()
+            (let ((result (proc)))
+              (sqlite-exec db "COMMIT")
+              result))
+          (lambda args
+            (sqlite-exec db "ROLLBACK")
+            (apply throw args))))
+      (proc)))
 
-;;; Maintenance
+;;; Utility operations
 
 (define (vacuum-database! db)
   "Vacuum the database to reclaim space"
-  (sqlite-exec db "VACUUM"))
+  (if (and sqlite3-available? db)
+      (begin
+        (sqlite-exec db "VACUUM")
+        #t)
+      (stub-warning "vacuum-database!")))
+
+;;; Helper functions for parsing database rows
+
+(define (parse-deployment-row row)
+  "Parse a database row into a deployment event"
+  (if sqlite3-available?
+      (make-deployment-event-internal
+       (vector-ref row 0)  ; id
+       (vector-ref row 1)  ; service-name
+       (vector-ref row 2)  ; version
+       (string->symbol (vector-ref row 3))  ; environment
+       (string->symbol (vector-ref row 4))  ; deployment-type
+       (seconds->time (vector-ref row 5) time-utc)  ; started
+       (and (vector-ref row 6)
+            (seconds->time (vector-ref row 6) time-utc))  ; completed
+       (string->symbol (vector-ref row 7))  ; status
+       (vector-ref row 8)  ; initiator
+       (if (vector-ref row 9)
+           (with-input-from-string (vector-ref row 9) read)
+           '())  ; metadata
+       (vector-ref row 10))  ; parent-id
+      #f))
+
+(define (parse-rollback-row row)
+  "Parse a database row into a rollback event"
+  (if sqlite3-available?
+      (make-rollback-event-internal
+       (vector-ref row 0)  ; id
+       (vector-ref row 1)  ; service-name
+       (vector-ref row 2)  ; from-version
+       (vector-ref row 3)  ; to-version
+       (vector-ref row 4)  ; reason
+       (seconds->time (vector-ref row 5) time-utc)  ; initiated
+       (and (vector-ref row 6)
+            (seconds->time (vector-ref row 6) time-utc))  ; completed
+       (string->symbol (vector-ref row 7))  ; status
+       (vector-ref row 8))  ; deployment-id
+      #f))
+
+(define (parse-metadata-row row)
+  "Parse a database row into service metadata"
+  (if sqlite3-available?
+      (make-service-metadata-internal
+       (vector-ref row 0)  ; name
+       (vector-ref row 1)  ; description
+       (vector-ref row 2)  ; team
+       (vector-ref row 3)  ; repository-url
+       (vector-ref row 4)  ; documentation-url
+       (vector-ref row 5)  ; health-check-url
+       (if (vector-ref row 6)
+           (with-input-from-string (vector-ref row 6) read)
+           '())  ; dependencies
+       (if (vector-ref row 7)
+           (with-input-from-string (vector-ref row 7) read)
+           '()))  ; tags
+      #f))
+
+;; Helper for time conversion
+(define (seconds->time seconds time-type)
+  "Convert seconds to time structure"
+  (make-time time-type 0 seconds))
+
+(define (time->seconds time)
+  "Convert time structure to seconds"
+  (time-second time))
