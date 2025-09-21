@@ -1,0 +1,119 @@
+name: Auto Version Bump
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'VERSION'
+      - '**/*.md'
+      - 'docs/**'
+      - 'demos/**'
+      - 'presentations/**'
+
+jobs:
+  bump-version:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get current version
+        id: current
+        run: |
+          CURRENT_VERSION=$(cat VERSION)
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $CURRENT_VERSION"
+
+      - name: Calculate next version
+        id: next
+        run: |
+          CURRENT=$(cat VERSION)
+
+          # Parse semantic version
+          IFS='.' read -ra VERSION_PARTS <<< "$CURRENT"
+          MAJOR="${VERSION_PARTS[0]}"
+          MINOR="${VERSION_PARTS[1]}"
+          PATCH="${VERSION_PARTS[2]}"
+
+          # Determine version bump type from commit message
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+
+          if [[ "$COMMIT_MSG" == *"BREAKING CHANGE"* ]] || [[ "$COMMIT_MSG" == *"!"* ]]; then
+            # Major version bump
+            MAJOR=$((MAJOR + 1))
+            MINOR=0
+            PATCH=0
+            BUMP_TYPE="major"
+          elif [[ "$COMMIT_MSG" == feat:* ]] || [[ "$COMMIT_MSG" == feat\(*\):* ]]; then
+            # Minor version bump for features
+            MINOR=$((MINOR + 1))
+            PATCH=0
+            BUMP_TYPE="minor"
+          else
+            # Patch version bump for everything else
+            PATCH=$((PATCH + 1))
+            BUMP_TYPE="patch"
+          fi
+
+          NEXT_VERSION="$MAJOR.$MINOR.$PATCH"
+
+          echo "Next version: $NEXT_VERSION (bump: $BUMP_TYPE)"
+          echo "version=$NEXT_VERSION" >> $GITHUB_OUTPUT
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Update VERSION file
+        run: |
+          echo "${{ steps.next.outputs.version }}" > VERSION
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add VERSION
+          git commit -m "chore: bump version to ${{ steps.next.outputs.version }} [skip ci]
+
+          Auto-bumped ${{ steps.next.outputs.bump_type }} version from ${{ steps.current.outputs.version }} to ${{ steps.next.outputs.version }}
+          Triggered by: ${{ github.event.head_commit.message }}"
+
+      - name: Push version bump
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
+
+      - name: Create version tag
+        run: |
+          git tag "v${{ steps.next.outputs.version }}"
+          git push origin "v${{ steps.next.outputs.version }}"
+
+      - name: Update man page version
+        run: |
+          # Update version in man page
+          sed -i "s/Version [0-9]\+\.[0-9]\+\.[0-9]\+/Version ${{ steps.next.outputs.version }}/" man/gdl.1
+
+          if git diff --quiet man/gdl.1; then
+            echo "Man page already up to date"
+          else
+            git add man/gdl.1
+            git commit -m "docs: update man page version to ${{ steps.next.outputs.version }} [skip ci]"
+            git push
+          fi
+
+      - name: Record deployment (if available)
+        if: success()
+        continue-on-error: true
+        run: |
+          # Record this version deployment if gdl is available
+          chmod +x ./gdl 2>/dev/null || true
+          if [ -x "./gdl" ]; then
+            ./gdl record-deployment \
+              --service guile-deploy-ledger \
+              --version "v${{ steps.next.outputs.version }}" \
+              --environment production \
+              --type rolling \
+              --initiator "github-actions" \
+              --change-id "${{ github.sha }}"
+          fi

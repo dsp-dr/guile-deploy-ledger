@@ -1,5 +1,5 @@
 # Enhanced Makefile for Guile Deploy Ledger with Universal Support
-# Copyright (C) 2024 DSP-DR
+# Copyright (C) 2025 Daria Pascal (dsp-dr)
 
 # Detect OS and architecture
 UNAME_S := $(shell uname -s)
@@ -34,11 +34,15 @@ endif
 # Configuration
 PREFIX ?= /usr/local
 BINDIR := $(PREFIX)/bin
+MANDIR := $(PREFIX)/share/man/man1
 LIBDIR := $(PREFIX)/lib/guile/3.0/site-ccache
 DATADIR := $(PREFIX)/share/guile/site/3.0
 DOCDIR := $(PREFIX)/share/doc/guile-deploy-ledger
 DBDIR := $(HOME)/.deploy-ledger
 SENTINEL_DIR := .make-sentinels
+
+# Version from VERSION file
+VERSION := $(shell cat VERSION 2>/dev/null || echo "1.0.0")
 
 # Tool detection
 GUILE := $(shell which guile 2>/dev/null || echo "guile-not-found")
@@ -60,8 +64,16 @@ DOC_DIR := docs
 SCRIPT_DIR := scripts
 MIGRATION_DIR := migrations
 
-# Source files
-SOURCES := $(shell find $(SRC_DIR) -name "*.scm" 2>/dev/null)
+# Source files - ordered for proper compilation dependencies
+# Types must be compiled first, then storage, then everything else
+SOURCES := src/deploy-ledger/core/types.scm \
+           src/deploy-ledger/storage/sqlite.scm \
+           src/deploy-ledger/query/metrics.scm \
+           src/deploy-ledger/reporting/export.scm \
+           src/deploy-ledger/reporting/visualize.scm \
+           src/deploy-ledger/cli/config.scm \
+           src/deploy-ledger/cli/commands.scm \
+           src/deploy-ledger/cli/main.scm
 TESTS := $(shell find $(TEST_DIR) -name "test-*.scm" 2>/dev/null)
 EXAMPLES := $(shell find $(EXAMPLE_DIR) -name "*.scm" 2>/dev/null)
 
@@ -84,10 +96,29 @@ $(shell mkdir -p $(SENTINEL_DIR))
 .PHONY: all help clean install uninstall test check lint format docs compile repl examples
 .PHONY: deps-check deps-install setup db-init db-migrate db-reset db-backup
 .PHONY: dev-setup onboard diagnostic preflight
-.PHONY: docker-build docker-run ci release
+.PHONY: docker-build docker-run ci ci-check release
+.PHONY: build gdl man presentations
 
 # Main targets
-all: preflight setup compile test ## Complete build and test
+all: preflight setup compile build test ## Complete build and test
+
+build: gdl man ## Build executable and documentation
+
+gdl: guile-deploy-ledger ## Create short-named executable
+	@echo -e "$(YELLOW)Creating short executable name 'gdl'...$(NC)"
+	@cp guile-deploy-ledger gdl
+	@chmod +x gdl
+	@echo -e "$(GREEN)✓ Created gdl executable$(NC)"
+
+man: man/gdl.1 ## Build man page
+	@echo -e "$(GREEN)✓ Man page ready$(NC)"
+
+presentations: ## Build presentations
+	@echo -e "$(YELLOW)Building presentations...$(NC)"
+	@if [ -d presentations ]; then \
+		$(MAKE) -C presentations all 2>/dev/null || true; \
+	fi
+	@echo -e "$(GREEN)✓ Presentations built$(NC)"
 
 help: ## Show this help message with OS info
 	@echo -e "$(CYAN)Guile Deploy Ledger - Build System$(NC)"
@@ -216,7 +247,8 @@ compile: $(SOURCES:.scm=.go) ## Compile Scheme files to bytecode
 %.go: %.scm $(SENTINEL_DIR)/guile-modules-installed
 	@mkdir -p $(dir $@)
 	@echo -e "$(BLUE)Compiling $<...$(NC)"
-	@$(GUILD) compile -L $(SRC_DIR) -o $@ $< 2>/dev/null || \
+	@export GUILE_LOAD_COMPILED_PATH="$(SRC_DIR):${GUILE_LOAD_COMPILED_PATH:-}"; \
+		$(GUILD) compile -L $(SRC_DIR) -o $@ $< 2>/dev/null || \
 		(echo -e "$(RED)✗ Failed to compile $<$(NC)" && exit 1)
 
 # Testing
@@ -242,18 +274,23 @@ format: ## Format code
 	@echo -e "$(GREEN)✓ Formatting complete$(NC)"
 
 # Installation
-install: compile ## Install the application
+install: compile build ## Install the application
 	@echo -e "$(YELLOW)Installing to $(PREFIX)...$(NC)"
-	@mkdir -p $(BINDIR) $(DATADIR)/deploy-ledger $(DOCDIR)
+	@mkdir -p $(BINDIR) $(MANDIR) $(DATADIR)/deploy-ledger $(DOCDIR)
 	@cp -r $(SRC_DIR)/* $(DATADIR)/deploy-ledger/
-	@cp $(SCRIPT_DIR)/guile-deploy-ledger $(BINDIR)/
-	@chmod +x $(BINDIR)/guile-deploy-ledger
+	@cp gdl $(BINDIR)/
+	@chmod +x $(BINDIR)/gdl
+	@cp man/gdl.1 $(MANDIR)/
+	@gzip -f $(MANDIR)/gdl.1
 	@cp README.org $(DOCDIR)/
 	@echo -e "$(GREEN)✓ Installation complete$(NC)"
+	@echo -e "$(CYAN)Installed 'gdl' to $(BINDIR)$(NC)"
+	@echo -e "$(CYAN)Man page: man gdl$(NC)"
 
 uninstall: ## Uninstall the application
 	@echo -e "$(YELLOW)Uninstalling...$(NC)"
-	@rm -f $(BINDIR)/guile-deploy-ledger
+	@rm -f $(BINDIR)/gdl
+	@rm -f $(MANDIR)/gdl.1.gz
 	@rm -rf $(DATADIR)/deploy-ledger
 	@rm -rf $(DOCDIR)
 	@echo -e "$(GREEN)✓ Uninstallation complete$(NC)"
@@ -265,6 +302,7 @@ clean: ## Clean build artifacts
 	@find . -name "*~" -delete 2>/dev/null || true
 	@rm -rf build/ dist/ *.log
 	@rm -rf $(SENTINEL_DIR)
+	@rm -f gdl
 	@echo -e "$(GREEN)✓ Clean complete$(NC)"
 
 repl: setup ## Start a REPL with project loaded
@@ -322,15 +360,43 @@ docker-run: docker-build ## Run in Docker container
 		guile-deploy-ledger:latest
 
 # CI/CD
-ci: clean preflight setup compile test ## Run CI pipeline
+ci: clean preflight setup compile test ci-check ## Run CI pipeline
 	@echo -e "$(GREEN)✓ CI pipeline passed$(NC)"
 
-release: clean compile test ## Prepare a release
-	@echo -e "$(YELLOW)Preparing release...$(NC)"
+ci-check: ## Validate latest CI run (GitHub Actions)
+	@echo -e "$(YELLOW)Checking latest CI run status...$(NC)"
+	@if [ "$(GIT)" != "git-not-found" ]; then \
+		REPO=$$(git remote get-url origin 2>/dev/null | sed 's/.*github.com[:\/]\(.*\)\.git/\1/' || echo "dsp-dr/guile-deploy-ledger"); \
+		echo "Repository: $$REPO"; \
+		if command -v gh >/dev/null 2>&1; then \
+			gh run list --repo $$REPO --limit 1 --json status,conclusion,name,headBranch | \
+				jq -r '.[0] | "\(.name) on \(.headBranch): \(.status) (\(.conclusion // "in progress"))"' || \
+				echo "Unable to fetch CI status"; \
+			gh run view --repo $$REPO --json jobs | \
+				jq -r '.jobs[] | "  - \(.name): \(.conclusion // .status)"' 2>/dev/null || true; \
+		else \
+			echo "GitHub CLI (gh) not installed - cannot check CI status"; \
+		fi; \
+	else \
+		echo "Git not found - cannot determine repository"; \
+	fi
+
+release: clean compile test build ## Prepare a release
+	@echo -e "$(YELLOW)Preparing release v$(VERSION)...$(NC)"
 	@mkdir -p dist
-	@tar czf dist/guile-deploy-ledger-$(shell date +%Y%m%d).tar.gz \
-		--exclude='.git' --exclude='dist' --exclude='*.db' --exclude='*.go' .
-	@echo -e "$(GREEN)✓ Release package created$(NC)"
+	@tar czf dist/guile-deploy-ledger-v$(VERSION).tar.gz \
+		--exclude='.git' --exclude='dist' --exclude='*.db' --exclude='*.go' \
+		--exclude='.make-sentinels' .
+	@echo -e "$(GREEN)✓ Release package created: dist/guile-deploy-ledger-v$(VERSION).tar.gz$(NC)"
+
+version: ## Display current version
+	@echo "Guile Deploy Ledger v$(VERSION)"
+
+bump-version: ## Bump version number
+	@echo -e "$(YELLOW)Current version: $(VERSION)$(NC)"
+	@echo -n "New version: " && read NEW_VERSION && \
+		echo "$$NEW_VERSION" > VERSION && \
+		echo -e "$(GREEN)✓ Version bumped to $$NEW_VERSION$(NC)"
 
 # Development helpers
 watch: ## Watch for changes and recompile
