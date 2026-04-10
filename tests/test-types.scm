@@ -7,6 +7,11 @@
              (srfi srfi-64)
              (srfi srfi-19))
 
+;;; Test helper: compute a time n days in the past
+(define (days-ago n)
+  (let ((now (current-time time-utc)))
+    (make-time time-utc 0 (- (time-second now) (* n 86400)))))
+
 (test-begin "deployment-types")
 
 (test-group "deployment-event"
