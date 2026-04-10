@@ -185,7 +185,7 @@
               deployment)))
       (stub-warning "get-deployment")))
 
-(define (list-deployments db #:key service environment status limit offset)
+(define* (list-deployments db #:key service environment status limit offset)
   "List deployments with optional filters"
   (if (and sqlite3-available? db)
       (let* ((query-base "
@@ -244,7 +244,7 @@
                 (collect (cons (parse-deployment-row row) deployments))))))
       '()))
 
-(define (update-deployment-status! db id status #:optional completed)
+(define* (update-deployment-status! db id status #:optional completed)
   "Update deployment status and optionally set completion time"
   (if (and sqlite3-available? db)
       (let* ((query (if completed
@@ -314,7 +314,7 @@
               rollback)))
       (stub-warning "get-rollback")))
 
-(define (list-rollbacks db #:key service limit offset)
+(define* (list-rollbacks db #:key service limit offset)
   "List rollbacks with optional filters"
   (if (and sqlite3-available? db)
       (let* ((query (if service
