@@ -11,6 +11,10 @@ NC='\033[0m'
 
 echo "Checking system dependencies..."
 
+# Detect guile3/guild3 (FreeBSD) vs guile/guild
+GUILE_CMD="${GUILE_CMD:-$(command -v guile3 2>/dev/null || command -v guile 2>/dev/null || echo guile)}"
+GUILD_CMD="${GUILD_CMD:-$(command -v guild3 2>/dev/null || command -v guild 2>/dev/null || echo guild)}"
+
 # Track missing dependencies
 MISSING_DEPS=""
 MISSING_OPTIONAL=""
@@ -42,7 +46,7 @@ check_guile_module() {
     local required=$2
     local description=$3
 
-    if guile -c "(use-modules ($module)) (exit 0)" 2>/dev/null; then
+    if "$GUILE_CMD" -c "(use-modules ($module)) (exit 0)" 2>/dev/null; then
         echo -e "${GREEN}✓${NC} Guile module '$module' found"
         return 0
     else
@@ -60,8 +64,8 @@ check_guile_module() {
 # Check required tools
 echo ""
 echo "Checking required tools:"
-check_command "guile" "required" "Guile"
-check_command "guild" "required" "Guild (Guile compiler)"
+check_command "$GUILE_CMD" "required" "Guile"
+check_command "$GUILD_CMD" "required" "Guild (Guile compiler)"
 check_command "sqlite3" "required" "SQLite3"
 check_command "git" "required" "Git"
 check_command "bash" "required" "Bash"
@@ -79,8 +83,8 @@ check_command "rg" "optional" "Ripgrep"
 # Check Guile version
 echo ""
 echo "Checking Guile version:"
-if command -v guile > /dev/null 2>&1; then
-    GUILE_VERSION=$(guile --version | head -1 | awk '{print $NF}')
+if command -v "$GUILE_CMD" > /dev/null 2>&1; then
+    GUILE_VERSION=$("$GUILE_CMD" --version | head -1 | awk '{print $NF}')
     MAJOR_VERSION=$(echo "$GUILE_VERSION" | cut -d. -f1)
     MINOR_VERSION=$(echo "$GUILE_VERSION" | cut -d. -f2)
 

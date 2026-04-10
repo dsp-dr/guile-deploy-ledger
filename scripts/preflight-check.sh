@@ -15,6 +15,10 @@ echo -e "${CYAN}     Pre-flight Checks                 ${NC}"
 echo -e "${CYAN}═══════════════════════════════════════${NC}"
 echo ""
 
+# Detect guile3/guild3 (FreeBSD) vs guile/guild
+GUILE_CMD="${GUILE_CMD:-$(command -v guile3 2>/dev/null || command -v guile 2>/dev/null || echo guile)}"
+GUILD_CMD="${GUILD_CMD:-$(command -v guild3 2>/dev/null || command -v guild 2>/dev/null || echo guild)}"
+
 WARNINGS=0
 ERRORS=0
 
@@ -58,8 +62,8 @@ echo ""
 
 # Tool availability
 echo -e "${CYAN}Tool Availability:${NC}"
-check "Guile interpreter" "command -v guile" "error"
-check "Guild compiler" "command -v guild" "error"
+check "Guile interpreter" "command -v $GUILE_CMD" "error"
+check "Guild compiler" "command -v $GUILD_CMD" "error"
 check "SQLite3" "command -v sqlite3" "error"
 check "Git" "command -v git" "error"
 check "Make" "command -v make || command -v gmake" "error"
@@ -117,10 +121,10 @@ echo ""
 
 # Guile module paths
 echo -e "${CYAN}Guile Configuration:${NC}"
-GUILE_VERSION=$(guile --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "unknown")
+GUILE_VERSION=$("$GUILE_CMD" --version 2>/dev/null | head -1 | awk '{print $NF}' || echo "unknown")
 echo "  Guile version: $GUILE_VERSION"
 echo "  Load paths:"
-guile -c '(for-each (lambda (p) (display "    ") (display p) (newline)) %load-path)' 2>/dev/null || echo "    Unable to determine"
+"$GUILE_CMD" -c '(for-each (lambda (p) (display "    ") (display p) (newline)) %load-path)' 2>/dev/null || echo "    Unable to determine"
 
 echo ""
 

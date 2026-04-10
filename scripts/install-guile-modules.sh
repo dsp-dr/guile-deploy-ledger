@@ -11,13 +11,16 @@ NC='\033[0m'
 
 echo -e "${CYAN}Checking and installing Guile modules...${NC}"
 
+# Detect guile3 (FreeBSD) vs guile
+GUILE_CMD="${GUILE_CMD:-$(command -v guile3 2>/dev/null || command -v guile 2>/dev/null || echo guile)}"
+
 # Function to check module availability
 check_module() {
     local module=$1
     local package=$2
     local description=$3
 
-    if guile -c "(use-modules ($module)) (exit 0)" 2>/dev/null; then
+    if "$GUILE_CMD" -c "(use-modules ($module)) (exit 0)" 2>/dev/null; then
         echo -e "${GREEN}✓${NC} $description found"
         return 0
     else

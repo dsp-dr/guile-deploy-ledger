@@ -45,8 +45,8 @@ SENTINEL_DIR := .make-sentinels
 VERSION := $(shell cat VERSION 2>/dev/null || echo "1.0.0")
 
 # Tool detection
-GUILE := $(shell which guile 2>/dev/null || echo "guile-not-found")
-GUILD := $(shell which guild 2>/dev/null || echo "guild-not-found")
+GUILE := $(shell which guile3 2>/dev/null || which guile 2>/dev/null || echo "guile-not-found")
+GUILD := $(shell which guild3 2>/dev/null || which guild 2>/dev/null || echo "guild-not-found")
 SQLITE3 := $(shell which sqlite3 2>/dev/null || echo "sqlite3-not-found")
 GIT := $(shell which git 2>/dev/null || echo "git-not-found")
 DOCKER := $(shell which docker 2>/dev/null || echo "docker-not-found")
