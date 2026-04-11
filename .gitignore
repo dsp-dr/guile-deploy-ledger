@@ -1,3 +1,5 @@
 .make-sentinels/
 *.go
 node_modules/
+*.log
+*.core
